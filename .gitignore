@@ -1,0 +1,42 @@
+# ---- Environment & Secrets ----
+.env
+.env.production
+.env.local
+.env.*.local
+LINKEDIN_POST.md
+
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ---- Virtual Environments ----
+venv/
+.venv/
+env/
+ENV/
+
+# ---- Node / Frontend ----
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Testing / Coverage ----
+.coverage
+htmlcov/
+.pytest_cache/

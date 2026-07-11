@@ -1,0 +1,19 @@
+{
+  "name": "smart-stadiums-and-tournaments",
+  "version": "1.0.0",
+  "description": "**One-Line Pitch:** VenueSync ingests live zone-level crowd, staffing, and incident data, reasons over it against venue constraints, and hands the organizer a ranked, explained action queue.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}
