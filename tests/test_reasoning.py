@@ -115,7 +115,9 @@ class TestGoldenSetReasoning:
         )
         mock_client.models.generate_content.return_value = mock_response
 
-        output: ReasoningCycleOutput = generate_actions(processed_state, client=mock_client)
+        output: ReasoningCycleOutput = generate_actions(
+            processed_state, client=mock_client
+        )
 
         # --- Structural assertions (never assert on exact rationale text) ---
         assert isinstance(output, ReasoningCycleOutput)
@@ -154,9 +156,7 @@ class TestGoldenSetReasoning:
         output = generate_actions(processed_state, client=mock_client)
 
         # Re-serialize and re-validate to confirm round-trip schema integrity
-        revalidated = ReasoningCycleOutput.model_validate_json(
-            output.model_dump_json()
-        )
+        revalidated = ReasoningCycleOutput.model_validate_json(output.model_dump_json())
         assert revalidated.actions[0].action_type == output.actions[0].action_type
         assert revalidated.degraded_mode == output.degraded_mode
 
@@ -196,7 +196,9 @@ class TestDegradedModeFallback:
             "LLM API request timed out"
         )
 
-        output: ReasoningCycleOutput = generate_actions(processed_state, client=mock_client)
+        output: ReasoningCycleOutput = generate_actions(
+            processed_state, client=mock_client
+        )
 
         # --- Core degraded-mode assertions ---
         assert output.degraded_mode is True
@@ -240,9 +242,7 @@ class TestDegradedModeFallback:
         assert output.actions[0].confidence == 1.0
 
         # Validate full round-trip through Pydantic
-        revalidated = ReasoningCycleOutput.model_validate_json(
-            output.model_dump_json()
-        )
+        revalidated = ReasoningCycleOutput.model_validate_json(output.model_dump_json())
         assert revalidated.degraded_mode is True
 
 

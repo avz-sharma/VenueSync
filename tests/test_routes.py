@@ -60,7 +60,9 @@ async def test_post_reason_debounce() -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with patch("backend.api.routes.generate_actions", return_value=mock_output) as mock_gen:
+        with patch(
+            "backend.api.routes.generate_actions", return_value=mock_output
+        ) as mock_gen:
             # First call
             res1 = await client.post("/api/reason")
             assert res1.status_code == 200

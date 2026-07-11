@@ -30,11 +30,13 @@ router = APIRouter()
 
 MAX_FILE_SIZE_BYTES: int = 6 * 1024 * 1024  # 6 MB
 MAX_CSV_ROWS: int = 5_000
-ALLOWED_MIME_TYPES: frozenset[str] = frozenset({
-    "text/plain",
-    "text/csv",
-    "application/csv",
-})
+ALLOWED_MIME_TYPES: frozenset[str] = frozenset(
+    {
+        "text/plain",
+        "text/csv",
+        "application/csv",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Response Schema
@@ -121,7 +123,9 @@ async def upload_csv(file: UploadFile) -> UploadResponse:
             )
         rows.append(row)
 
-    logger.info(f"CSV upload parsed successfully: {len(rows)} rows, {len(columns)} columns")
+    logger.info(
+        f"CSV upload parsed successfully: {len(rows)} rows, {len(columns)} columns"
+    )
 
     return UploadResponse(
         status="success",

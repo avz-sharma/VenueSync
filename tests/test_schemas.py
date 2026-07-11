@@ -199,8 +199,11 @@ class TestIncident:
 
     def test_all_incident_types(self) -> None:
         valid_types = [
-            "medical", "security", "overcrowding",
-            "equipment_failure", "weather",
+            "medical",
+            "security",
+            "overcrowding",
+            "equipment_failure",
+            "weather",
         ]
         for t in valid_types:
             inc = Incident(

@@ -78,7 +78,10 @@ async def test_rejects_non_csv_content() -> None:
         )
 
     assert response.status_code == 415
-    assert "image/png" in response.json()["detail"].lower() or "Unsupported" in response.json()["detail"]
+    assert (
+        "image/png" in response.json()["detail"].lower()
+        or "Unsupported" in response.json()["detail"]
+    )
 
 
 @pytest.mark.asyncio
@@ -89,7 +92,9 @@ async def test_rejects_csv_exceeding_row_limit() -> None:
     # Patch magic.from_buffer to return text/csv (since the content is valid CSV text)
     with patch("backend.api.upload.magic.from_buffer", return_value="text/csv"):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/api/upload",
                 files={"file": ("large.csv", io.BytesIO(csv_bytes), "text/csv")},
@@ -107,7 +112,9 @@ async def test_accepts_valid_csv() -> None:
     # Patch magic.from_buffer to return text/csv
     with patch("backend.api.upload.magic.from_buffer", return_value="text/csv"):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/api/upload",
                 files={"file": ("valid.csv", io.BytesIO(csv_bytes), "text/csv")},
@@ -128,7 +135,9 @@ async def test_accepts_csv_at_exact_row_limit() -> None:
 
     with patch("backend.api.upload.magic.from_buffer", return_value="text/csv"):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/api/upload",
                 files={"file": ("boundary.csv", io.BytesIO(csv_bytes), "text/csv")},

@@ -415,12 +415,8 @@ class SyntheticAdapter(DataSourceAdapter):
                 severity: str = self._weighted_severity(density)
 
                 # Incident reported sometime within the current tick window
-                offset_seconds: int = self._rng.randint(
-                    0, self._tick_minutes * 60
-                )
-                reported_at: datetime = current_time - timedelta(
-                    seconds=offset_seconds
-                )
+                offset_seconds: int = self._rng.randint(0, self._tick_minutes * 60)
+                reported_at: datetime = current_time - timedelta(seconds=offset_seconds)
 
                 incidents.append(
                     Incident(
@@ -461,19 +457,14 @@ class SyntheticAdapter(DataSourceAdapter):
         Security and medical staff in zones with incidents have elevated
         probability of 'responding' status.
         """
-        incident_zones: frozenset[str] = frozenset(
-            inc.zone_id for inc in incidents
-        )
+        incident_zones: frozenset[str] = frozenset(inc.zone_id for inc in incidents)
 
         staff_list: list[Staff] = []
         for template in _STAFF_TEMPLATE:
             zone_id: str = template["zone_id"]
             role: str = template["role"]
 
-            if (
-                zone_id in incident_zones
-                and role in ("security", "medical")
-            ):
+            if zone_id in incident_zones and role in ("security", "medical"):
                 status: str = self._rng.choice(["responding", "on_duty"])
             elif self._rng.random() < 0.05:
                 status = "break"

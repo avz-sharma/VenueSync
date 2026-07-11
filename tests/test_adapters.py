@@ -56,9 +56,7 @@ class TestSyntheticAdapterSnapshot:
         adapter = SyntheticAdapter(seed=42)
         snapshot = await adapter.get_snapshot()
         # Re-validate from dict round-trip
-        revalidated: VenueSnapshot = VenueSnapshot.model_validate(
-            snapshot.model_dump()
-        )
+        revalidated: VenueSnapshot = VenueSnapshot.model_validate(snapshot.model_dump())
         assert revalidated.timestamp == snapshot.timestamp
 
     @pytest.mark.asyncio
@@ -168,9 +166,9 @@ class TestSyntheticAdapterGraph:
         valid_ids: set[str] = {z.id for z in zones}
         for z in zones:
             for adj in z.adjacent_zones:
-                assert adj in valid_ids, (
-                    f"Zone '{z.id}' references unknown adjacent zone '{adj}'"
-                )
+                assert (
+                    adj in valid_ids
+                ), f"Zone '{z.id}' references unknown adjacent zone '{adj}'"
 
     @pytest.mark.asyncio
     async def test_staff_roster_returns_staff(self) -> None:

@@ -116,7 +116,9 @@ def sanitize_for_prompt(processed_state: Dict[str, Any]) -> Dict[str, Any]:
             sanitized_inc: Dict[str, Any] = {}
             for key, val in incident.items():
                 # Wrap any free-text fields that could carry untrusted content
-                if key in ("notes", "description", "reporter_name") and isinstance(val, str):
+                if key in ("notes", "description", "reporter_name") and isinstance(
+                    val, str
+                ):
                     sanitized_inc[key] = _wrap_value(val)
                 else:
                     sanitized_inc[key] = val
@@ -149,10 +151,10 @@ def fallback_action() -> ReasoningCycleOutput:
                 target_zones=[],
                 confidence=1.0,
                 rationale="System running in degraded mode. Dispatching security to monitor highest occupancy zones.",
-                predicted_impact="Mitigates risks during degraded mode."
+                predicted_impact="Mitigates risks during degraded mode.",
             )
         ],
-        degraded_mode=True
+        degraded_mode=True,
     )
 
 
@@ -161,7 +163,9 @@ def fallback_action() -> ReasoningCycleOutput:
 # ---------------------------------------------------------------------------
 
 
-def generate_actions(processed_state: Dict[str, Any], client: genai.Client = None) -> ReasoningCycleOutput:
+def generate_actions(
+    processed_state: Dict[str, Any], client: genai.Client = None
+) -> ReasoningCycleOutput:
     """
     Generates recommended actions from the preprocessed venue state using an LLM.
     Implements a strict try/except block with exactly one retry on ValidationError.

@@ -101,7 +101,10 @@ async def run_reason() -> ReasoningCycleOutput:
 
     async with _reason_lock:
         current_time = time.time()
-        if _cached_reason_output is not None and (current_time - _last_reason_time) < 15.0:
+        if (
+            _cached_reason_output is not None
+            and (current_time - _last_reason_time) < 15.0
+        ):
             logger.info("Returning cached reasoning output (debounced)")
             return _cached_reason_output
 
@@ -133,7 +136,9 @@ async def approve_action(action_id: str) -> ApproveResponse:
     """
     # Check if this action has already been approved
     if action_id in _approved_actions:
-        logger.info(f"Action approval request for {action_id} ignored (already approved)")
+        logger.info(
+            f"Action approval request for {action_id} ignored (already approved)"
+        )
         return ApproveResponse(
             status="success",
             action_id=action_id,
