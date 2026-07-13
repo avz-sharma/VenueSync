@@ -1,5 +1,0 @@
-fix(ci): pin black formatter to 25.9.0 and print version in CI
-
-- Updated requirements.txt to pin black to 25.9.0.
-- Re-formatted files locally to ensure strict alignment.
-- Added a step to print black version in .github/workflows/ci.yml.

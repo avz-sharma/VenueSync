@@ -1,0 +1,36 @@
+# Version control and GitHub
+.git
+.github
+.gitignore
+
+# Node/JavaScript
+node_modules
+npm-debug.log
+dist
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+
+# Testing
+tests/
+test-results/
+
+# Environment files
+.env
+.env.*
+
+# Specific exclusions requested
+diagnostic_script.py
+backend/diagnostic_script.py
+
+# OS generated files
+.DS_Store
+Thumbs.db

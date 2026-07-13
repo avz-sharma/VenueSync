@@ -12,7 +12,12 @@ load_dotenv()
 import logging
 import uuid
 import structlog
-from fastapi import FastAPI, Request
+import os
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 
@@ -79,6 +84,16 @@ app: FastAPI = FastAPI(
     version=APP_VERSION,
 )
 
+if os.getenv("ENVIRONMENT") == "development":
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[frontend_url, "http://localhost:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 
 @app.middleware("http")
 async def structlog_middleware(request: Request, call_next):
@@ -124,3 +139,30 @@ async def health_check() -> HealthResponse:
 async def get_version() -> VersionResponse:
     """Return the current semantic version of the application."""
     return VersionResponse(version=APP_VERSION)
+
+
+# ---------------------------------------------------------------------------
+# Static Assets and SPA Fallback
+# ---------------------------------------------------------------------------
+
+# Mount static assets if they exist (to avoid crashing locally if dist is not built yet)
+assets_path = Path("frontend/dist/assets")
+if assets_path.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API route not found")
+    
+    candidate = Path("frontend/dist") / full_path
+    if candidate.is_file():
+        return FileResponse(candidate)
+        
+    index_path = Path("frontend/dist/index.html")
+    if index_path.is_file():
+        return FileResponse(index_path)
+        
+    # If the frontend is not built at all, just return 404
+    raise HTTPException(status_code=404, detail="Frontend not built")
+

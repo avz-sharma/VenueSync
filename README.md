@@ -41,3 +41,38 @@ uvicorn backend.main:app --reload --port 8000
 cd frontend
 npm run dev
 ```
+
+## Production Deployment (Google Cloud Run)
+
+VenueSync is deployed as a single, unified container running on Google Cloud Run. The React frontend is built as static assets and served directly by the FastAPI backend.
+
+### Required Environment Variables
+The following environment variables must be configured in Cloud Run (do **not** commit these to GitHub):
+- `GEMINI_API_KEY`: Your Gemini API key.
+- `DATA_SOURCE`: Either `synthetic` or `upload`.
+- `LOG_LEVEL`: Configures structured logging (e.g., `INFO`).
+
+*(Note: `VITE_API_URL` is not needed in production as everything runs on the same origin).*
+
+### Deployment Pipeline
+The application uses Google Cloud Build connected to GitHub. Pushing to the `main` branch triggers the deployment pipeline defined in `cloudbuild.yaml`.
+
+#### Manual Setup Required:
+To enable the pipeline, you must complete the following one-time setup in your Google Cloud Project:
+1. **Connect Repository:** Connect your GitHub repository to a Cloud Build Trigger.
+2. **Secret Manager:** Store your Gemini API key in Google Secret Manager as `gemini-api-key`.
+3. **IAM Permissions:** Grant the Cloud Build service account the following roles:
+   - *Cloud Run Admin*
+   - *Service Account User*
+   - *Secret Manager Secret Accessor* (to read the API key)
+
+### Local Docker Testing
+You can build and test the unified production container locally:
+```bash
+# Build the unified image
+docker build -t venuesync .
+
+# Run locally on port 5005
+docker run -e PORT=5005 -p 5005:5005 venuesync
+```
+Access the application at `http://localhost:5005`.

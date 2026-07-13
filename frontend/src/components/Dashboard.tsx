@@ -451,7 +451,7 @@ export function Dashboard(): React.JSX.Element {
       <div className="flex-1 flex flex-col min-w-0 h-full relative">
         
         {/* Apple-Style Global Control Strip */}
-        <header className="h-16 border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
+        <header className="h-16 border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0 relative z-40">
           <div className="flex items-center gap-3 w-1/3">
             {isFetching ? (
               <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
