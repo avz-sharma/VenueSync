@@ -104,6 +104,7 @@ class RainSimulationResponse(BaseModel):
     covered_zones: list[str]
     message: str
 
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -128,7 +129,7 @@ async def get_snapshot() -> VenueSnapshot:
             blended = _intervention_manager.get_blended_occupancies(now)
         else:
             blended = _intervention_manager.get_blended_occupancies(now)
-            
+
         new_occupancies = []
         for occ in snapshot.occupancies:
             if occ.zone_id in blended:
@@ -137,18 +138,18 @@ async def get_snapshot() -> VenueSnapshot:
                     count=blended[occ.zone_id],
                     capacity=occ.capacity,
                     pct_capacity=occ.pct_capacity,
-                    trend=occ.trend
+                    trend=occ.trend,
                 )
                 new_occupancies.append(new_occ)
             else:
                 new_occupancies.append(occ)
-                
+
         snapshot = VenueSnapshot(
             timestamp=snapshot.timestamp,
             zones=snapshot.zones,
             occupancies=new_occupancies,
             incidents=snapshot.incidents,
-            staff=snapshot.staff
+            staff=snapshot.staff,
         )
 
     return snapshot
@@ -227,21 +228,23 @@ async def approve_action(action_id: str) -> ApproveResponse:
         snapshot = await adapter.get_snapshot()
         zones = await adapter.get_venue_graph()
         source_occs = {o.zone_id: o.count for o in snapshot.occupancies}
-        
+
         # Determine targets based on action context
         # If action target zones contains a gate, simulate gate closure
         gate_targets = [z for z in action_info.target_zones if "gate" in z]
         if "close" in action_info.action_type.lower() and gate_targets:
-            target_occs = compute_gate_closure_targets(zones, snapshot.occupancies, gate_targets[0])
+            target_occs = compute_gate_closure_targets(
+                zones, snapshot.occupancies, gate_targets[0]
+            )
         else:
             # Fallback to generic weather/rain shift for any general redirect
             target_occs = compute_rain_shift_targets(zones, snapshot.occupancies)
-            
+
         _intervention_manager = InterventionStateManager(
             approved_at=time.time(),
             source_occupancies=source_occs,
             target_occupancies=target_occs,
-            duration=12.0
+            duration=12.0,
         )
 
     _approved_actions[action_id] = {
@@ -330,25 +333,27 @@ async def load_scenario() -> LoadScenarioResponse:
 @router.post("/demo/gate-closure", response_model=GateClosureResponse)
 async def simulate_gate_closure(body: GateClosureRequest) -> GateClosureResponse:
     """Simulate closing a gate and redirecting crowd to alternatives.
-    
-    This acts as a scenario override and sets up a progressive crowd 
+
+    This acts as a scenario override and sets up a progressive crowd
     balancing intervention over a 12-second window.
     """
     global _intervention_manager, _cached_reason_output
     adapter = get_active_adapter()
     snapshot = await adapter.get_snapshot()
     zones = await adapter.get_venue_graph()
-    
+
     source_occs = {o.zone_id: o.count for o in snapshot.occupancies}
-    target_occs = compute_gate_closure_targets(zones, snapshot.occupancies, body.gate_id)
-    
+    target_occs = compute_gate_closure_targets(
+        zones, snapshot.occupancies, body.gate_id
+    )
+
     _intervention_manager = InterventionStateManager(
         approved_at=time.time(),
         source_occupancies=source_occs,
         target_occupancies=target_occs,
-        duration=12.0
+        duration=12.0,
     )
-    
+
     # Add an incident to reflect the reality
     tz = ZoneInfo("Asia/Kolkata")
     now = datetime.now(tz)
@@ -359,51 +364,53 @@ async def simulate_gate_closure(body: GateClosureRequest) -> GateClosureResponse
         severity="high",
         reported_at=now,
     )
-    
-    # We must patch the active adapter if it supports overrides, 
+
+    # We must patch the active adapter if it supports overrides,
     # but the simplest is just clearing reason cache so the next cycle sees the blended state.
     _cached_reason_output = None
-    
+
     return GateClosureResponse(
         status="success",
         closed_gate=body.gate_id,
-        redirect_targets=[z for z, c in target_occs.items() if c > source_occs.get(z, 0)],
-        message=f"Gate {body.gate_id} closed. Crowd redistributing over 12 seconds."
+        redirect_targets=[
+            z for z, c in target_occs.items() if c > source_occs.get(z, 0)
+        ],
+        message=f"Gate {body.gate_id} closed. Crowd redistributing over 12 seconds.",
     )
 
 
 @router.post("/demo/rain-simulation", response_model=RainSimulationResponse)
 async def simulate_rain() -> RainSimulationResponse:
     """Simulate sudden rain, causing crowd to seek covered zones.
-    
+
     This sets up a progressive crowd balancing intervention over a 12-second window.
     """
     global _intervention_manager, _cached_reason_output
     adapter = get_active_adapter()
     snapshot = await adapter.get_snapshot()
     zones = await adapter.get_venue_graph()
-    
+
     source_occs = {o.zone_id: o.count for o in snapshot.occupancies}
     target_occs = compute_rain_shift_targets(zones, snapshot.occupancies)
-    
+
     _intervention_manager = InterventionStateManager(
         approved_at=time.time(),
         source_occupancies=source_occs,
         target_occupancies=target_occs,
-        duration=12.0
+        duration=12.0,
     )
-    
+
     tz = ZoneInfo("Asia/Kolkata")
     now = datetime.now(tz)
-    
+
     _cached_reason_output = None
-    
+
     covered_zones = [z.id for z in zones if z.is_covered]
-    
+
     return RainSimulationResponse(
         status="success",
         covered_zones=covered_zones,
-        message="Rain simulation started. Crowd moving to covered zones over 12 seconds."
+        message="Rain simulation started. Crowd moving to covered zones over 12 seconds.",
     )
 
 

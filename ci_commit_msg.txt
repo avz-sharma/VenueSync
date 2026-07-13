@@ -1,0 +1,4 @@
+fix(ci): reformat backend files with black and bump workflow environment to Node 24
+
+- Automatically ran black linter across backend/ and tests/ to fix spacing rules.
+- Restructured .github/workflows/ci.yml to comply with modern runner defaults.

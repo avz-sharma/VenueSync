@@ -227,7 +227,9 @@ class TestDebriefEndpoint:
     async def test_debrief_empty_list_returns_422(self) -> None:
         """An empty snapshots list must be rejected with HTTP 422."""
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             response = await client.post(
                 "/api/analytics/debrief",
                 json={"snapshots": []},
@@ -245,7 +247,9 @@ class TestDebriefEndpoint:
         payload = {"snapshots": [s.model_dump(mode="json") for s in snapshots]}
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             with patch(
                 "backend.api.routes.generate_debrief",
                 return_value=_MOCK_HISTORICAL,
@@ -269,7 +273,9 @@ class TestDebriefEndpoint:
         payload = {"snapshots": [s.model_dump(mode="json") for s in snapshots]}
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
             # generate_debrief already handles ValidationError internally and returns
             # a fallback HistoricalMetrics — so we simulate the final-gate failure
             # by patching it to return the pre-built fallback directly.
@@ -323,29 +329,31 @@ class TestDebriefEndpoint:
 async def test_demo_gate_closure() -> None:
     """POST /api/demo/gate-closure must set up intervention and return 200."""
     import backend.api.routes
-    
+
     adapter = backend.api.routes.get_active_adapter()
     adapter.set_override_snapshot(None)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        res = await client.post("/api/demo/gate-closure", json={"gate_id": "gate_north"})
+        res = await client.post(
+            "/api/demo/gate-closure", json={"gate_id": "gate_north"}
+        )
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "success"
         assert data["closed_gate"] == "gate_north"
         assert "redirect_targets" in data
-        
+
     assert backend.api.routes._intervention_manager is not None
     assert backend.api.routes._cached_reason_output is None
-    backend.api.routes._intervention_manager = None # cleanup
+    backend.api.routes._intervention_manager = None  # cleanup
 
 
 @pytest.mark.asyncio
 async def test_demo_rain_simulation() -> None:
     """POST /api/demo/rain-simulation must set up intervention and return 200."""
     import backend.api.routes
-    
+
     adapter = backend.api.routes.get_active_adapter()
     adapter.set_override_snapshot(None)
 
@@ -356,8 +364,7 @@ async def test_demo_rain_simulation() -> None:
         data = res.json()
         assert data["status"] == "success"
         assert "covered_zones" in data
-        
+
     assert backend.api.routes._intervention_manager is not None
     assert backend.api.routes._cached_reason_output is None
-    backend.api.routes._intervention_manager = None # cleanup
-
+    backend.api.routes._intervention_manager = None  # cleanup

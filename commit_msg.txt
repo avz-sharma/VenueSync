@@ -1,8 +1,0 @@
-feat(ui/engine): complete tactical obsidian HUD redesign and predictive crowd physics
-
-- Overhauled index.css with deep obsidian variables (#080c14) and glassmorphism elements.
-- Refactored ZoneMap.tsx with HTML5 canvas layers for Density Heatmaps, Vector Flows, and Roster nodes.
-- Implemented time-stepped progressive crowd balancing interpolation over a 12s window.
-- Updated VenueStats.tsx to feature triple-nested green gradient concentric SVG progress gauges.
-- Restructured ReasoningTracePanel.tsx into an interactive vertical logic timeline tree.
-- Integrated connection resilience alerts and a 15-second cache cooldown indicator.

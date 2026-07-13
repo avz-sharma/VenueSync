@@ -29,10 +29,10 @@ def test_blend_occupancy():
     assert blend_occupancy(source=100, target=200, alpha=0.0) == 100
     assert blend_occupancy(source=100, target=200, alpha=0.5) == 150
     assert blend_occupancy(source=100, target=200, alpha=1.0) == 200
-    
+
     # Check rounding
-    assert blend_occupancy(source=10, target=20, alpha=0.1) == 11 # 10 + 1
-    assert blend_occupancy(source=10, target=20, alpha=0.15) == 12 # 10 + 1.5 -> 12
+    assert blend_occupancy(source=10, target=20, alpha=0.1) == 11  # 10 + 1
+    assert blend_occupancy(source=10, target=20, alpha=0.15) == 12  # 10 + 1.5 -> 12
 
 
 @pytest.fixture
@@ -57,20 +57,22 @@ def sample_occupancies():
 
 def test_compute_gate_closure_targets(sample_zones, sample_occupancies):
     """Gate closure should distribute crowd to alternatives."""
-    targets = compute_gate_closure_targets(sample_zones, sample_occupancies, "gate_north")
-    
+    targets = compute_gate_closure_targets(
+        sample_zones, sample_occupancies, "gate_north"
+    )
+
     assert targets["gate_north"] == 0
-    
+
     # 1000 people from gate_north redistributed evenly to gate_south and concourse_a
-    # That's 500 each. 
+    # That's 500 each.
     # gate_south: 500 + 500 = 1000
     # concourse_a: 1000 + 500 = 1500
     # stand_east: unchanged (4000)
-    
+
     assert targets["gate_south"] == 1000
     assert targets["concourse_a"] == 1500
     assert targets["stand_east"] == 4000
-    
+
     # Total headcount conserved
     original_total = sum(o.count for o in sample_occupancies)
     new_total = sum(targets.values())
@@ -80,24 +82,24 @@ def test_compute_gate_closure_targets(sample_zones, sample_occupancies):
 def test_compute_rain_shift_targets(sample_zones, sample_occupancies):
     """Rain shift should move crowd from exposed to covered zones."""
     targets = compute_rain_shift_targets(sample_zones, sample_occupancies)
-    
+
     # Covered zones: concourse_a
     # Exposed zones: gate_north, gate_south, stand_east
-    
+
     # Original exposed: 1000 (gate_north) + 500 (gate_south) + 4000 (stand_east)
     # 50% shift means:
     # gate_north loses 500
     # gate_south loses 250
     # stand_east loses 2000
     # Total shifted = 2750
-    
+
     assert targets["gate_north"] == 500
     assert targets["gate_south"] == 250
     assert targets["stand_east"] == 2000
-    
+
     # concourse_a gets the full 2750 shifted
     assert targets["concourse_a"] == 1000 + 2750
-    
+
     # Total headcount conserved
     original_total = sum(o.count for o in sample_occupancies)
     new_total = sum(targets.values())
@@ -108,27 +110,32 @@ def test_intervention_state_manager():
     """State manager should correctly handle the lifecycle."""
     source = {"z1": 100, "z2": 200}
     target = {"z1": 0, "z2": 300}
-    
-    mgr = InterventionStateManager(approved_at=10.0, source_occupancies=source, target_occupancies=target, duration=10.0)
-    
+
+    mgr = InterventionStateManager(
+        approved_at=10.0,
+        source_occupancies=source,
+        target_occupancies=target,
+        duration=10.0,
+    )
+
     # Before
     b1 = mgr.get_blended_occupancies(5.0)
     assert b1["z1"] == 100
     assert b1["z2"] == 200
     assert not mgr.is_complete(5.0)
-    
+
     # Halfway
     b2 = mgr.get_blended_occupancies(15.0)
     assert b2["z1"] == 50
     assert b2["z2"] == 250
     assert not mgr.is_complete(15.0)
-    
+
     # Complete
     b3 = mgr.get_blended_occupancies(20.0)
     assert b3["z1"] == 0
     assert b3["z2"] == 300
     assert mgr.is_complete(20.0)
-    
+
     # After
     b4 = mgr.get_blended_occupancies(25.0)
     assert b4["z1"] == 0

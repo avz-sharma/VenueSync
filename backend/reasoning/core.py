@@ -247,7 +247,9 @@ def _sanitize_debrief_metrics(compressed_metrics: Dict[str, Any]) -> Dict[str, A
     must be treated as untrusted strings.
     """
     sanitized = dict(compressed_metrics)
-    if "top_bottlenecks" in sanitized and isinstance(sanitized["top_bottlenecks"], list):
+    if "top_bottlenecks" in sanitized and isinstance(
+        sanitized["top_bottlenecks"], list
+    ):
         sanitized["top_bottlenecks"] = [
             _wrap_value(name) if isinstance(name, str) else name
             for name in sanitized["top_bottlenecks"]
