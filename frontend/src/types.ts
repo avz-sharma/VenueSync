@@ -1,8 +1,17 @@
+export interface IntensityPoint {
+  x: number;
+  y: number;
+  intensity: number;
+  vx?: number;
+  vy?: number;
+}
+
 export interface Zone {
   id: string;
   name: string;
   capacity: number;
   adjacent_zones: string[];
+  heatmap_points?: IntensityPoint[];
 }
 
 export interface Occupancy {

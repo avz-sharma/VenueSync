@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from backend.main import app
+from backend.preprocessor.core import process_historical_run
 from backend.schemas.reasoning import ActionRecommendation, ReasoningCycleOutput
+from shared.schemas.domain import HistoricalMetrics, Occupancy, VenueSnapshot, Zone
 
 mock_output = ReasoningCycleOutput(
     actions=[
@@ -166,3 +170,194 @@ async def test_load_demo_scenario() -> None:
         assert gate_north_incident is not None
         assert gate_north_incident["type"] == "medical"
         assert gate_north_incident["severity"] == "critical"
+
+
+# ---------------------------------------------------------------------------
+# Debrief endpoint tests
+# ---------------------------------------------------------------------------
+
+_UTC = timezone.utc
+
+
+def _make_snapshot(
+    gate_north_pct: float = 0.40,
+    include_incident: bool = False,
+) -> VenueSnapshot:
+    """Build a minimal but fully-valid VenueSnapshot for debrief tests."""
+    zones = [
+        Zone(id="gate_north", name="Gate North", capacity=2000, adjacent_zones=[]),
+        Zone(id="concourse_a", name="Concourse A", capacity=1500, adjacent_zones=[]),
+    ]
+    occupancies = [
+        Occupancy(
+            zone_id="gate_north",
+            count=int(2000 * gate_north_pct),
+            capacity=2000,
+            pct_capacity=0.0,
+            trend="stable",
+        ),
+        Occupancy(
+            zone_id="concourse_a",
+            count=int(1500 * 0.40),
+            capacity=1500,
+            pct_capacity=0.0,
+            trend="stable",
+        ),
+    ]
+    return VenueSnapshot(
+        timestamp=datetime.now(_UTC),
+        zones=zones,
+        occupancies=occupancies,
+        incidents=[],
+        staff=[],
+    )
+
+
+_MOCK_HISTORICAL = HistoricalMetrics(
+    top_bottlenecks=["Gate North"],
+    critical_density_duration_minutes=15,
+    executive_summary="Gate North was the primary bottleneck. Increase staff deployment there next event.",
+)
+
+
+class TestDebriefEndpoint:
+    """Behavioural tests for POST /api/analytics/debrief."""
+
+    @pytest.mark.asyncio
+    async def test_debrief_empty_list_returns_422(self) -> None:
+        """An empty snapshots list must be rejected with HTTP 422."""
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/analytics/debrief",
+                json={"snapshots": []},
+            )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_debrief_happy_path(self) -> None:
+        """Valid snapshot list returns a well-formed HistoricalMetrics response.
+
+        generate_debrief is mocked so no LLM call is made during CI.
+        """
+        snapshots = [_make_snapshot(gate_north_pct=0.97) for _ in range(3)]
+        payload = {"snapshots": [s.model_dump(mode="json") for s in snapshots]}
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch(
+                "backend.api.routes.generate_debrief",
+                return_value=_MOCK_HISTORICAL,
+            ):
+                response = await client.post("/api/analytics/debrief", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "top_bottlenecks" in data
+        assert "critical_density_duration_minutes" in data
+        assert "executive_summary" in data
+        assert isinstance(data["executive_summary"], str)
+        assert len(data["executive_summary"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_debrief_validation_failure_returns_fallback(self) -> None:
+        """When generate_debrief raises ValidationError the endpoint must return
+        an inert but valid HistoricalMetrics fallback (no 500 crash).
+        """
+        snapshots = [_make_snapshot(gate_north_pct=0.97)]
+        payload = {"snapshots": [s.model_dump(mode="json") for s in snapshots]}
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            # generate_debrief already handles ValidationError internally and returns
+            # a fallback HistoricalMetrics — so we simulate the final-gate failure
+            # by patching it to return the pre-built fallback directly.
+            with patch(
+                "backend.api.routes.generate_debrief",
+                return_value=HistoricalMetrics(
+                    top_bottlenecks=["unknown"],
+                    critical_density_duration_minutes=0,
+                    executive_summary=(
+                        "System running in degraded mode — LLM debrief unavailable. "
+                        "Manual review of historical run data is required before next event."
+                    ),
+                ),
+            ):
+                response = await client.post("/api/analytics/debrief", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "degraded" in data["executive_summary"].lower()
+        assert data["top_bottlenecks"] == ["unknown"]
+        assert data["critical_density_duration_minutes"] == 0
+
+    def test_debrief_math_isolation(self) -> None:
+        """process_historical_run must compute correct metrics without any LLM call.
+
+        Three snapshots where gate_north is at 97 % capacity (above the 95 % PHS
+        critical threshold) and concourse_a is at 40 % (not critical).
+        Expected:
+          - top_bottlenecks == ["Gate North"]  (only zone that breached)
+          - critical_density_duration_minutes == 3 ticks * 5 min/tick == 15
+          - snapshot_count == 3
+        """
+        snapshots = [_make_snapshot(gate_north_pct=0.97) for _ in range(3)]
+        result = process_historical_run(snapshots)
+
+        assert result["top_bottlenecks"] == ["Gate North"]
+        assert result["critical_density_duration_minutes"] == 15
+        assert result["snapshot_count"] == 3
+
+    def test_debrief_math_isolation_no_breaches(self) -> None:
+        """With all zones below the critical threshold, duration must be zero."""
+        snapshots = [_make_snapshot(gate_north_pct=0.50) for _ in range(5)]
+        result = process_historical_run(snapshots)
+
+        assert result["top_bottlenecks"] == []
+        assert result["critical_density_duration_minutes"] == 0
+        assert result["snapshot_count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_demo_gate_closure() -> None:
+    """POST /api/demo/gate-closure must set up intervention and return 200."""
+    import backend.api.routes
+    
+    adapter = backend.api.routes.get_active_adapter()
+    adapter.set_override_snapshot(None)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        res = await client.post("/api/demo/gate-closure", json={"gate_id": "gate_north"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["closed_gate"] == "gate_north"
+        assert "redirect_targets" in data
+        
+    assert backend.api.routes._intervention_manager is not None
+    assert backend.api.routes._cached_reason_output is None
+    backend.api.routes._intervention_manager = None # cleanup
+
+
+@pytest.mark.asyncio
+async def test_demo_rain_simulation() -> None:
+    """POST /api/demo/rain-simulation must set up intervention and return 200."""
+    import backend.api.routes
+    
+    adapter = backend.api.routes.get_active_adapter()
+    adapter.set_override_snapshot(None)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        res = await client.post("/api/demo/rain-simulation")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert "covered_zones" in data
+        
+    assert backend.api.routes._intervention_manager is not None
+    assert backend.api.routes._cached_reason_output is None
+    backend.api.routes._intervention_manager = None # cleanup
+

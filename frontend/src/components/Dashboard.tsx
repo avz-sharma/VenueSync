@@ -2,6 +2,88 @@ import React, { useEffect, useState, useRef } from 'react';
 import type { VenueSnapshot, ReasoningCycleOutput } from '../types';
 import { ZoneMap } from './ZoneMap';
 import { RecommendationQueue } from './RecommendationQueue';
+import { SidebarRoster } from './SidebarRoster';
+
+// Micro-component for Cache Cooldown Progress Circle
+function CooldownRing({ lastReasonTime }: { lastReasonTime: number }): React.JSX.Element {
+  const circleRef = useRef<SVGCircleElement>(null);
+  const textRef = useRef<SVGTextElement>(null);
+  const [isSpinning, setIsSpinning] = useState(false);
+
+  useEffect(() => {
+    let frame: number;
+    const update = () => {
+      const now = Date.now();
+      const elapsed = now - lastReasonTime;
+      const remaining = Math.max(0, 15000 - elapsed);
+      const pct = 1 - (remaining / 15000);
+      
+      if (circleRef.current) {
+        const circum = 2 * Math.PI * 14;
+        circleRef.current.style.strokeDashoffset = `${circum - pct * circum}`;
+      }
+      if (textRef.current) {
+        textRef.current.textContent = remaining > 0 ? `${Math.ceil(remaining / 1000)}s` : 'RDY';
+      }
+      
+      if (remaining > 0) {
+        frame = requestAnimationFrame(update);
+      }
+    };
+    frame = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(frame);
+  }, [lastReasonTime]);
+
+  const handleClick = () => {
+    if (Date.now() - lastReasonTime < 15000) {
+      setIsSpinning(true);
+      setTimeout(() => setIsSpinning(false), 500);
+    }
+  };
+
+  return (
+    <div className="relative w-8 h-8 cursor-pointer shrink-0" onClick={handleClick} title="AI Reasoning Cooldown Cache">
+      <svg className={`w-8 h-8 -rotate-90 ${isSpinning ? 'animate-spin' : ''}`} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="14" fill="none" className="stroke-slate-800" strokeWidth="3" />
+        <circle 
+          ref={circleRef}
+          cx="16" cy="16" r="14" fill="none" 
+          className="stroke-indigo-500 transition-none" 
+          strokeWidth="3" 
+          strokeDasharray={2 * Math.PI * 14}
+          strokeDashoffset={2 * Math.PI * 14}
+          strokeLinecap="round"
+        />
+        <text 
+          ref={textRef}
+          x="16" y="16" 
+          dominantBaseline="middle" 
+          textAnchor="middle" 
+          className="fill-slate-400 font-mono text-[8px] font-bold"
+          transform="rotate(90 16 16)"
+        >
+          RDY
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+// React click-outside listener hook (Apple interface pattern)
+function useClickOutside(ref: React.RefObject<HTMLElement | null>, handler: () => void) {
+  useEffect(() => {
+    const listener = (event: MouseEvent) => {
+      if (!ref.current || ref.current.contains(event.target as Node)) {
+        return;
+      }
+      handler();
+    };
+    document.addEventListener('mousedown', listener);
+    return () => {
+      document.removeEventListener('mousedown', listener);
+    };
+  }, [ref, handler]);
+}
 
 export function Dashboard(): React.JSX.Element {
   // Snapshot states
@@ -14,6 +96,7 @@ export function Dashboard(): React.JSX.Element {
   // Reasoning states
   const [reasoning, setReasoning] = useState<ReasoningCycleOutput | null>(null);
   const [loadingReasoning, setLoadingReasoning] = useState<boolean>(false);
+  const [lastReasonTime, setLastReasonTime] = useState<number>(0);
   const lastReasonTimeRef = useRef<number>(0);
   
   // Interaction/Mutation states
@@ -22,11 +105,46 @@ export function Dashboard(): React.JSX.Element {
   const [scenarioLoading, setScenarioLoading] = useState<boolean>(false);
   const [scenarioMessage, setScenarioMessage] = useState<{ text: string; isError: boolean } | null>(null);
   
+  const [activeSimulation, setActiveSimulation] = useState<{
+    name: string;
+    startedAt: number;
+    durationMs: number;
+    affectedZones: string[];
+  } | null>(null);
+  
   // Connection / general error state
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Ref to track active interval for cleanup
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Dropdown states for scenario simulation
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close menu when clicking outside
+  useClickOutside(dropdownRef, () => setIsDropdownOpen(false));
+
+  // Reconnection hook (clean component lifecycle)
+  const [reconnectSeconds, setReconnectSeconds] = useState(0);
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (connectionError) {
+      setReconnectSeconds(4);
+      interval = setInterval(() => {
+        setReconnectSeconds(prev => {
+          if (prev <= 1) {
+            void handleRetryConnection();
+            return 4; 
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [connectionError]);
 
   // API Call - Fetch snapshot
   const fetchSnapshot = async (isInitial = false): Promise<VenueSnapshot | null> => {
@@ -55,8 +173,8 @@ export function Dashboard(): React.JSX.Element {
 
   // API Call - Trigger Reasoning Engine
   const runReasoning = async (force = false): Promise<void> => {
-    // If already loading reasoning, ignore
-    if (loadingReasoning) return;
+    // If already loading reasoning, ignore unless forced
+    if (loadingReasoning && !force) return;
 
     const currentTime = Date.now();
     const timeSinceLastReasoning = currentTime - lastReasonTimeRef.current;
@@ -77,7 +195,9 @@ export function Dashboard(): React.JSX.Element {
       }
       const data: ReasoningCycleOutput = await res.json();
       setReasoning(data);
-      lastReasonTimeRef.current = Date.now();
+      const now = Date.now();
+      lastReasonTimeRef.current = now;
+      setLastReasonTime(now);
     } catch (err: any) {
       console.error('Reasoning call failed:', err);
       // We don't crash, we just log and show warning if needed
@@ -116,14 +236,28 @@ export function Dashboard(): React.JSX.Element {
     });
   };
 
-  // API Call - Load Demo Scenario
-  const handleLoadDemoScenario = async () => {
+  // API Call - Trigger Simulation Scenario
+  const handleTriggerScenario = async (
+    endpoint: string,
+    method: 'GET' | 'POST',
+    body?: { gate_id: string },
+    successMessage?: string,
+    simulationName?: string,
+    affectedZones?: string[]
+  ) => {
     setScenarioLoading(true);
     setScenarioMessage(null);
+    setIsDropdownOpen(false);
     try {
-      const res = await fetch('/api/demo/load-scenario');
+      const config: RequestInit = { method };
+      if (body) {
+        config.headers = { 'Content-Type': 'application/json' };
+        config.body = JSON.stringify(body);
+      }
+      
+      const res = await fetch(endpoint, config);
       if (!res.ok) {
-        throw new Error(`Failed to load demo scenario: HTTP status ${res.status}`);
+        throw new Error(`Failed to trigger scenario: HTTP status ${res.status}`);
       }
       
       // Reset approved and dismissed actions when scenario is overridden
@@ -132,13 +266,41 @@ export function Dashboard(): React.JSX.Element {
       
       // Clear client-side reasoning timestamp so it can reason immediately on the new state
       lastReasonTimeRef.current = 0;
+      setLastReasonTime(0);
 
       // Update state
       const updatedSnapshot = await fetchSnapshot();
+
+      // Check if response contains a custom message
+      let displayMsg = successMessage;
+      try {
+        const data = await res.json();
+        if (data && data.message) {
+          displayMsg = data.message;
+        }
+      } catch (e) {
+        // Fallback to custom successMessage if parsing fails
+      }
+
       setScenarioMessage({
-        text: "Critical Incident Demo Scenario loaded successfully! 'gate_north' is at 98% with an active medical incident.",
+        text: displayMsg || 'Simulation scenario triggered successfully.',
         isError: false,
       });
+
+      if (simulationName && affectedZones) {
+        const sim = {
+          name: simulationName,
+          startedAt: Date.now(),
+          durationMs: 12000,
+          affectedZones,
+        };
+        setActiveSimulation(sim);
+        setTimeout(() => {
+          setActiveSimulation((prev) => (prev?.startedAt === sim.startedAt ? null : prev));
+        }, 12500);
+      } else {
+        setActiveSimulation(null);
+      }
 
       // Force reasoning cycle immediately
       if (updatedSnapshot) {
@@ -147,7 +309,7 @@ export function Dashboard(): React.JSX.Element {
     } catch (err: any) {
       console.error(err);
       setScenarioMessage({
-        text: err.message || 'Could not load demo scenario.',
+        text: err.message || 'Could not trigger simulation scenario.',
         isError: true,
       });
     } finally {
@@ -241,27 +403,27 @@ export function Dashboard(): React.JSX.Element {
   // Render unreachable backend screen
   if (connectionError && loadingSnapshot) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-slate-100">
-        <div className="max-w-md w-full bg-slate-900 border border-red-500/30 rounded-2xl p-8 shadow-2xl text-center space-y-6">
-          <div className="h-16 w-16 bg-red-500/10 border border-red-500/20 text-red-500 rounded-full flex items-center justify-center mx-auto animate-pulse">
+      <div className="min-h-screen flex items-center justify-center p-6 bg-[#080c14]">
+        <div className="max-w-md w-full bg-slate-900/60 border border-red-500/50 backdrop-blur-md rounded-2xl p-8 shadow-2xl text-center space-y-6">
+          <div className="h-16 w-16 bg-red-50 border border-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto animate-pulse">
             <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-bold tracking-tight text-white">API Connection Failed</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-100">API Connection Failed</h1>
             <p className="text-sm text-slate-400">
               VenueSync Command Dashboard could not connect to the backend server (Failed attempts: {errorCount} / Threshold: {ERROR_THRESHOLD}).
             </p>
           </div>
-          <div className="text-xs font-mono bg-black/40 text-red-400 p-3 rounded-lg border border-red-950 break-words">
+          <div className="text-xs font-mono bg-slate-50 text-red-600 p-3 rounded-lg border border-red-100 break-words">
             {connectionError}
           </div>
           <button
             onClick={() => {
               void handleRetryConnection();
             }}
-            className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-red-600/20"
+            className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all shadow-sm"
           >
             Retry Connection
           </button>
@@ -270,356 +432,285 @@ export function Dashboard(): React.JSX.Element {
     );
   }
 
-  // Render clean layout even if snapshot is null (failsafe fallback screen)
   const isDataMissing = !snapshot;
 
   return (
-    <div className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))] text-slate-100 p-6 font-sans">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#080c14] text-slate-100 font-sans">
+      
+      {/* COLUMN 1: Left-Hand Side Roster & Capacities */}
+      <SidebarRoster 
+        staff={snapshot?.staff || []} 
+        venue={{
+          name: "Metropolitan Arena",
+          currentLoad: metrics.totalOccupancy,
+          totalCapacity: metrics.totalCapacity > 0 ? metrics.totalCapacity : 22000
+        }} 
+      />
+
+      {/* CORE WORKSPACE ANCHOR */}
+      <div className="flex-1 flex flex-col min-w-0 h-full relative">
         
-        {/* TOP COMMAND BAR */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-900">
-          <div>
-            <div className="flex items-center gap-2">
-              {isFetching ? (
-                <span className="h-2.5 w-2.5 rounded-full bg-cyan-400 animate-pulse" />
-              ) : (
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
-              )}
-              <h1 className="text-3xl font-extrabold bg-gradient-to-r from-emerald-400 via-cyan-400 to-indigo-400 bg-clip-text text-transparent tracking-tight">
-                VenueSync
-              </h1>
+        {/* Apple-Style Global Control Strip */}
+        <header className="h-16 border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 w-1/3">
+            {isFetching ? (
+              <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+            )}
+            <div>
+              <h1 className="text-sm font-bold text-slate-100 tracking-tight">VenueSync Core</h1>
+              <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Operational Command</p>
             </div>
-            <p className="text-slate-400 text-xs mt-1 tracking-wider uppercase font-semibold">
-              Operational Control Command Room
-            </p>
+          </div>
+          
+          {/* Real-Time Telemetry Status Bar */}
+          <div className="flex-1 flex justify-center w-1/3">
+            {connectionError ? (
+              <div className="flex items-center gap-2 px-4 py-1.5 bg-red-950/40 border border-red-500/50 rounded-full shadow-[0_0_15px_rgba(239,68,68,0.2)]">
+                <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-[10px] font-bold text-red-400 tracking-widest uppercase">
+                  [ TELEMETRY INTERRUPTED - Reconnecting in {reconnectSeconds}s ]
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-4 py-1.5 bg-emerald-950/30 border border-emerald-500/30 rounded-full shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-[10px] font-bold text-emerald-400 tracking-widest uppercase">
+                  [ CONNECTED - Live Telemetry ]
+                </span>
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Manual Refresh Reasoning button */}
+          {/* Action Optimization Toggles */}
+          <div className="relative inline-flex items-center justify-end w-1/3" ref={dropdownRef}>
+            {/* Main Split Action Button */}
             <button
-              onClick={() => void runReasoning(true)}
-              disabled={loadingReasoning || isDataMissing}
-              className="px-4 py-2 text-xs font-semibold bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800 text-slate-300 disabled:opacity-40 disabled:pointer-events-none rounded-xl transition-all flex items-center gap-1.5"
-            >
-              {loadingReasoning ? (
-                <>
-                  <svg className="animate-spin h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  <span>Reasoning…</span>
-                </>
-              ) : (
-                <>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.5" />
-                  </svg>
-                  <span>Run Reasoning</span>
-                </>
-              )}
-            </button>
-
-            {/* Load Demo Scenario button */}
-            <button
-              onClick={() => void handleLoadDemoScenario()}
+              onClick={() =>
+                void handleTriggerScenario(
+                  '/api/demo/load-scenario',
+                  'GET',
+                  undefined,
+                  "Critical Incident Demo Scenario loaded successfully! 'gate_north' is at 98% with an active medical incident."
+                )
+              }
               disabled={scenarioLoading}
-              className="relative px-5 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-300 hover:to-orange-300 rounded-xl transition-all shadow-lg shadow-orange-500/10 flex items-center gap-1.5"
+              className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 h-10 rounded-l-xl transition-all duration-200 active:scale-[0.98] shadow-sm flex items-center gap-2 border-r border-slate-800 disabled:opacity-50"
             >
               {scenarioLoading ? (
                 <>
-                  <svg className="animate-spin h-3.5 w-3.5 text-slate-950" fill="none" viewBox="0 0 24 24">
+                  <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  <span>Loading Scenario…</span>
+                  <span>Loading…</span>
                 </>
               ) : (
                 <>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-3.5 h-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                   <span>Load Demo Scenario</span>
                 </>
               )}
             </button>
+
+            {/* Dropdown Chevron Toggle */}
+            <button
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="group bg-slate-900 hover:bg-slate-800 text-white h-10 px-2.5 rounded-r-xl transition-all duration-200 active:scale-[0.98] shadow-sm flex items-center justify-center border-l border-slate-800"
+              aria-label="Select Scenario"
+            >
+              <svg
+                className={`w-4 h-4 text-slate-300 transition-transform duration-200 ${
+                  isDropdownOpen ? 'rotate-180' : 'group-hover:rotate-180'
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.5}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {/* Dropdown Menu */}
+            {isDropdownOpen && (
+              <div className="absolute right-0 top-full mt-2 w-72 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-xl shadow-2xl z-50 p-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="px-3 py-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  Select Venue Stress Scenario
+                </div>
+
+                <button
+                  onClick={() =>
+                    void handleTriggerScenario(
+                      '/api/demo/load-scenario',
+                      'GET',
+                      undefined,
+                      "Critical Incident Demo Scenario loaded successfully! 'gate_north' is at 98% with an active medical incident."
+                    )
+                  }
+                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium text-slate-850 hover:bg-slate-50 transition-colors flex flex-col gap-0.5"
+                >
+                  <span className="text-slate-900 font-semibold">1. Critical Incident (Tense)</span>
+                  <span className="text-xs text-slate-400">98% Gate North flood + Active medical emergency.</span>
+                </button>
+
+                <button
+                  onClick={() =>
+                    void handleTriggerScenario(
+                      '/api/demo/gate-closure',
+                      'POST',
+                      { gate_id: 'gate_north' },
+                      "Gate Closure Simulation triggered successfully! North gate closed. Rerouting in progress.",
+                      "Gate Closure",
+                      ['gate_north', 'gate_south', 'concourse_a', 'concourse_b']
+                    )
+                  }
+                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium text-slate-850 hover:bg-slate-50 transition-colors flex flex-col gap-0.5"
+                >
+                  <span className="text-slate-900 font-semibold">2. Gate Closure Simulation</span>
+                  <span className="text-xs text-slate-400">Close Gate North. 12s progressive rerouting to South.</span>
+                </button>
+
+                <button
+                  onClick={() =>
+                    void handleTriggerScenario(
+                      '/api/demo/rain-simulation',
+                      'POST',
+                      undefined,
+                      "Rain Simulation triggered successfully! Crowd shifting to covered zones.",
+                      "Rain simulation",
+                      ['stand_west', 'stand_east', 'concourse_a', 'concourse_b', 'vip_lounge']
+                    )
+                  }
+                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium text-slate-850 hover:bg-slate-50 transition-colors flex flex-col gap-0.5"
+                >
+                  <span className="text-slate-900 font-semibold">3. Rain Simulation Event</span>
+                  <span className="text-xs text-slate-400">50% exposed crowd shifts to covered shelters over 12s.</span>
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
-        {/* ALERTS AND SCENARIO MESSAGES */}
-        {scenarioMessage && (
-          <div className={`p-4 rounded-xl border flex items-start gap-3 transition-all ${
-            scenarioMessage.isError
-              ? 'bg-red-500/10 border-red-500/30 text-red-300'
-              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-          }`}>
-            <span className="mt-0.5 shrink-0">
-              {scenarioMessage.isError ? (
-                <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        {/* ALERTS AND SCENARIO MESSAGES (Positioned absolutely over main content or fixed at top) */}
+        <div className="absolute top-16 left-0 right-0 z-50 flex flex-col items-center gap-2 pt-4 pointer-events-none">
+          {scenarioMessage && (
+            <div className={`p-3 rounded-xl border flex items-start gap-3 shadow-md bg-white pointer-events-auto max-w-2xl mx-auto w-full transition-all ${
+              scenarioMessage.isError
+                ? 'border-red-200 text-red-700 bg-red-50'
+                : 'border-emerald-200 text-emerald-700 bg-emerald-50'
+            }`}>
+              <span className="mt-0.5 shrink-0">
+                {scenarioMessage.isError ? (
+                  <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+              </span>
+              <div className="flex-1 text-sm font-medium">
+                {scenarioMessage.text}
+              </div>
+              <button
+                onClick={() => setScenarioMessage(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
-              ) : (
-                <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              )}
-            </span>
-            <div className="flex-1 text-xs font-medium">
-              {scenarioMessage.text}
+              </button>
             </div>
-            <button
-              onClick={() => setScenarioMessage(null)}
-              className="text-slate-400 hover:text-white"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
+          )}
 
-        {/* CONNECTION ERROR DISPLAY BAR */}
-        {connectionError && (
-          <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-xl flex items-center justify-between text-xs text-red-300">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-red-500 animate-ping" />
-              <span><strong>Backend Offline:</strong> Polling snapshots failed (Attempt {errorCount}/{ERROR_THRESHOLD}). Polling is suspended.</span>
+          {connectionError && (
+            <div className="bg-red-50 border border-red-200 p-3 rounded-xl flex items-center justify-between text-sm text-red-700 shadow-md pointer-events-auto max-w-2xl mx-auto w-full">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-red-500 animate-ping" />
+                <span><strong>Backend Offline:</strong> Polling snapshots failed. Polling suspended.</span>
+              </div>
+              <button
+                onClick={() => void handleRetryConnection()}
+                className="underline hover:text-red-900 font-bold"
+              >
+                Reconnect
+              </button>
             </div>
-            <button
-              onClick={() => void handleRetryConnection()}
-              className="underline hover:text-white font-bold"
-            >
-              Reconnect
-            </button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* STATS RIBBON */}
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1: Total Occupancy */}
-          <div className="rounded-xl border border-slate-900 bg-slate-900/25 p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Occupancy</p>
-              <h3 className="text-xl font-bold text-white mt-1">
-                {loadingSnapshot ? '…' : `${metrics.totalOccupancy.toLocaleString()} / ${metrics.totalCapacity.toLocaleString()}`}
-              </h3>
-            </div>
-            <div className="text-slate-700">
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-            </div>
-          </div>
-
-          {/* Card 2: Fill Capacity */}
-          <div className="rounded-xl border border-slate-900 bg-slate-900/25 p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Venue Load</p>
-              <h3 className="text-xl font-bold text-white mt-1">
-                {loadingSnapshot ? '…' : `${metrics.pct}%`}
-              </h3>
-            </div>
-            <div className="text-slate-700">
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            </div>
-          </div>
-
-          {/* Card 3: Active Incidents */}
-          <div className={`rounded-xl border p-4 flex items-center justify-between transition-all ${
-            metrics.activeIncidents > 0
-              ? 'bg-red-950/20 border-red-500/30 text-red-100 shadow-lg shadow-red-950/20'
-              : 'bg-slate-900/25 border-slate-900'
-          }`}>
-            <div>
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Active Incidents</p>
-              <h3 className="text-xl font-bold text-white mt-1">
-                {loadingSnapshot ? '…' : metrics.activeIncidents}
-              </h3>
-            </div>
-            <div className={metrics.activeIncidents > 0 ? 'text-red-500 animate-pulse' : 'text-slate-700'}>
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
-          </div>
-
-          {/* Card 4: Staff Responding */}
-          <div className="rounded-xl border border-slate-900 bg-slate-900/25 p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Staff Dispatch</p>
-              <h3 className="text-xl font-bold text-white mt-1">
-                {loadingSnapshot ? '…' : `${metrics.staffResponding} Responding`}
-              </h3>
-            </div>
-            <div className="text-slate-700">
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-            </div>
-          </div>
-        </section>
-
-        {/* MAIN DASHBOARD INTERFACE */}
-        {isDataMissing && loadingSnapshot ? (
-          /* Loading Dashboard state */
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[550px]">
-            <div className="lg:col-span-2 border border-slate-900 bg-slate-900/10 rounded-2xl p-6 flex flex-col justify-between animate-pulse">
-              <div className="h-6 w-1/4 bg-slate-800 rounded" />
-              <div className="h-3/4 w-full bg-slate-900/50 rounded-xl my-4" />
-              <div className="h-6 w-1/3 bg-slate-800 rounded" />
-            </div>
-            <div className="border border-slate-900 bg-slate-900/10 rounded-2xl p-6 animate-pulse">
-              <div className="h-6 w-1/3 bg-slate-800 rounded mb-4" />
-              <div className="space-y-4">
-                <div className="h-28 bg-slate-800/40 rounded-xl" />
-                <div className="h-28 bg-slate-800/40 rounded-xl" />
+        {/* WORKSPACE SUB-GRID */}
+        <main className="flex-1 flex overflow-hidden p-6 gap-6 pt-8">
+          
+          {isDataMissing && loadingSnapshot ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="animate-pulse flex items-center gap-3 text-slate-500 font-medium text-sm">
+                <div className="h-2 w-2 rounded-full bg-slate-400 animate-ping" />
+                Initializing VenueSync Workspace...
               </div>
             </div>
-          </div>
-        ) : isDataMissing ? (
-          /* Empty / fallback dashboard when no data can be fetched at all */
-          <div className="border border-slate-900 bg-slate-900/20 rounded-2xl p-16 text-center space-y-4">
-            <h2 className="text-xl font-bold text-white">No Venue Snapshot Data</h2>
-            <p className="text-slate-400 max-w-md mx-auto text-sm">
-              The dashboard has not received any live event feed telemetry yet. Click the "Load Demo Scenario" button or verify the backend is running synthetic cycles.
-            </p>
-          </div>
-        ) : (
-          /* Standard Operational Dashboard */
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-            
-            {/* LEFT / CENTER COLUMN: MAP & OVERLAYS */}
-            <div className="lg:col-span-2 space-y-6">
-              
-              {/* Map */}
-              <ZoneMap
-                zones={snapshot.zones}
-                occupancies={snapshot.occupancies}
-                incidents={snapshot.incidents}
-                staff={snapshot.staff}
-              />
-
-              {/* Incidents & Staff Panel */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          ) : isDataMissing ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="premium-card text-center space-y-4 max-w-md w-full">
+                <h2 className="text-xl font-bold text-slate-100">No Venue Data</h2>
+                <p className="text-slate-400 text-sm">
+                  The dashboard has not received any live event feed telemetry yet.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* COLUMN 2: High-Performance Canvas Map Space */}
+              <div className="flex-1 flex flex-col h-full min-w-0">
+                <div className="mb-3 px-1">
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">Live Venue Map</h2>
+                  <p className="text-xs text-slate-500">Dynamic zone density & spatial tracking overlay</p>
+                </div>
                 
-                {/* Incidents Feed */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/30 backdrop-blur-md p-5 shadow-xl">
-                  <h3 className="text-sm font-semibold text-white tracking-wider mb-4 uppercase">
-                    Active Incident Feed ({snapshot.incidents.length})
-                  </h3>
-                  <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
-                    {snapshot.incidents.length === 0 ? (
-                      <p className="text-xs text-slate-500 italic p-4 text-center">
-                        No active incidents reported.
-                      </p>
-                    ) : (
-                      snapshot.incidents.map((incident) => {
-                        const isCritical = incident.severity === 'critical' || incident.severity === 'high';
-                        return (
-                          <div
-                            key={incident.id}
-                            className={`p-3 rounded-lg border text-xs flex justify-between gap-3 ${
-                              incident.severity === 'critical'
-                                ? 'bg-red-500/10 border-red-500/30 text-red-200'
-                                : incident.severity === 'high'
-                                ? 'bg-orange-500/10 border-orange-500/30 text-orange-200'
-                                : incident.severity === 'medium'
-                                ? 'bg-yellow-500/10 border-yellow-500/25 text-yellow-200'
-                                : 'bg-slate-900/80 border-slate-800 text-slate-300'
-                            }`}
-                          >
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-1.5">
-                                <span className={`h-1.5 w-1.5 rounded-full ${isCritical ? 'bg-red-500 animate-ping' : 'bg-current'}`} />
-                                <span className="font-semibold capitalize">{incident.type} alert</span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 font-mono">Zone: {incident.zone_id}</p>
-                            </div>
-                            <div className="text-right flex flex-col justify-between items-end">
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                                incident.severity === 'critical'
-                                  ? 'bg-red-500/20 text-red-400'
-                                  : incident.severity === 'high'
-                                  ? 'bg-orange-500/20 text-orange-400'
-                                  : incident.severity === 'medium'
-                                  ? 'bg-yellow-500/20 text-yellow-400'
-                                  : 'bg-slate-800 text-slate-400'
-                              }`}>
-                                {incident.severity}
-                              </span>
-                              <span className="text-[9px] text-slate-500">
-                                {new Date(incident.reported_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
+                {/* The canvas wrapper using flex relative size instead of forced aspect-video */}
+                <div className="flex-1 flex flex-col min-h-0 bg-slate-900/40 border border-slate-800/80 backdrop-blur-md rounded-2xl p-4 shadow-sm">
+                   <div className="flex-1 relative overflow-hidden">
+                      <ZoneMap
+                        zones={snapshot?.zones || []}
+                        occupancies={snapshot?.occupancies || []}
+                        incidents={snapshot?.incidents || []}
+                        staff={snapshot?.staff || []}
+                        activeSimulation={activeSimulation}
+                      />
+                   </div>
                 </div>
-
-                {/* Staff Roster Deployment */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/30 backdrop-blur-md p-5 shadow-xl">
-                  <h3 className="text-sm font-semibold text-white tracking-wider mb-4 uppercase">
-                    Staff Assignments ({snapshot.staff.length})
-                  </h3>
-                  <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
-                    {snapshot.staff.length === 0 ? (
-                      <p className="text-xs text-slate-500 italic p-4 text-center">
-                        No staff members assigned in system.
-                      </p>
-                    ) : (
-                      snapshot.staff.map((member) => (
-                        <div
-                          key={member.id}
-                          className="p-2.5 rounded-lg border border-slate-800 bg-slate-900/40 text-xs flex items-center justify-between gap-3"
-                        >
-                          <div>
-                            <p className="font-medium text-slate-200 font-mono text-[11px]">{member.id}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              <span className="text-[10px] text-slate-400 capitalize">{member.role}</span>
-                              <span className="text-[9px] text-slate-600 font-mono">·</span>
-                              <span className="text-[10px] text-slate-500 font-mono">Zone: {member.zone_id}</span>
-                            </div>
-                          </div>
-
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide uppercase ${
-                            member.status === 'responding'
-                              ? 'bg-red-500/25 border border-red-500/30 text-red-300 animate-pulse'
-                              : member.status === 'on_duty'
-                              ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                              : member.status === 'break'
-                              ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
-                              : 'bg-slate-800 border border-slate-700 text-slate-500'
-                          }`}>
-                            {member.status.replace('_', ' ')}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
               </div>
-            </div>
 
-            {/* RIGHT COLUMN: ACTION RECOMMENDATIONS QUEUE */}
-            <div className="lg:sticky lg:top-6">
-              <RecommendationQueue
-                reasoningOutput={reasoning}
-                loading={loadingReasoning && !reasoning}
-                onApprove={handleApproveAction}
-                onDismiss={handleDismissAction}
-                approvedIds={approvedActionIds}
-                dismissedIds={dismissedActionIds}
-              />
-            </div>
+              {/* COLUMN 3: Right-Hand Side Contextual Action Queue */}
+              <div className="w-[384px] flex flex-col h-full shrink-0">
+                <div className="mb-3 px-1 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">AI Logic Queue</h2>
+                    <p className="text-xs text-slate-500">PHS prioritized resource routing interventions</p>
+                  </div>
+                  <CooldownRing lastReasonTime={lastReasonTime} />
+                </div>
+                
+                <div className="flex-1 bg-slate-900/40 border border-slate-800/80 backdrop-blur-md rounded-2xl p-4 shadow-sm overflow-hidden flex flex-col">
+                  <RecommendationQueue
+                    reasoningOutput={reasoning}
+                    loading={loadingReasoning && !reasoning}
+                    onApprove={handleApproveAction}
+                    onDismiss={handleDismissAction}
+                    approvedIds={approvedActionIds}
+                    dismissedIds={dismissedActionIds}
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
-          </div>
-        )}
-
+        </main>
       </div>
     </div>
   );

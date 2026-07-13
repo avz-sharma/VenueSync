@@ -5,7 +5,9 @@ Re-exports all canonical data models for convenient imports:
 """
 
 from shared.schemas.domain import (
+    HistoricalMetrics,
     Incident,
+    IntensityPoint,
     Occupancy,
     Staff,
     VenueSnapshot,
@@ -13,7 +15,9 @@ from shared.schemas.domain import (
 )
 
 __all__: list[str] = [
+    "HistoricalMetrics",
     "Incident",
+    "IntensityPoint",
     "Occupancy",
     "Staff",
     "VenueSnapshot",

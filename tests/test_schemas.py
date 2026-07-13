@@ -12,7 +12,15 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import ValidationError
 
-from shared.schemas.domain import Incident, Occupancy, Staff, VenueSnapshot, Zone
+from shared.schemas.domain import (
+    HistoricalMetrics,
+    Incident,
+    IntensityPoint,
+    Occupancy,
+    Staff,
+    VenueSnapshot,
+    Zone,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -350,3 +358,145 @@ class TestVenueSnapshot:
         snap = self._make_snapshot()
         with pytest.raises(ValidationError):
             snap.timestamp = _NOW  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# IntensityPoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestIntensityPoint:
+    """Tests for the IntensityPoint spatial data model."""
+
+    def test_valid_construction(self) -> None:
+        pt = IntensityPoint(x=10.5, y=20.3, intensity=0.75)
+        assert pt.x == 10.5
+        assert pt.y == 20.3
+        assert pt.intensity == 0.75
+
+    def test_boundary_intensity_zero(self) -> None:
+        pt = IntensityPoint(x=0.0, y=0.0, intensity=0.0)
+        assert pt.intensity == 0.0
+
+    def test_boundary_intensity_one(self) -> None:
+        pt = IntensityPoint(x=0.0, y=0.0, intensity=1.0)
+        assert pt.intensity == 1.0
+
+    def test_rejects_intensity_below_zero(self) -> None:
+        with pytest.raises(ValidationError, match="greater than or equal to 0"):
+            IntensityPoint(x=0.0, y=0.0, intensity=-0.1)
+
+    def test_rejects_intensity_above_one(self) -> None:
+        with pytest.raises(ValidationError, match="less than or equal to 1"):
+            IntensityPoint(x=0.0, y=0.0, intensity=1.01)
+
+    def test_accepts_negative_coordinates(self) -> None:
+        """Coordinates can be negative — layout origin is flexible."""
+        pt = IntensityPoint(x=-5.0, y=-10.0, intensity=0.5)
+        assert pt.x == -5.0
+        assert pt.y == -10.0
+
+    def test_frozen(self) -> None:
+        pt = IntensityPoint(x=1.0, y=2.0, intensity=0.5)
+        with pytest.raises(ValidationError):
+            pt.intensity = 0.9  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Zone heatmap_points tests
+# ---------------------------------------------------------------------------
+
+
+class TestZoneHeatmapPoints:
+    """Tests for the optional heatmap_points field on Zone."""
+
+    def test_defaults_to_empty_list(self) -> None:
+        zone = _make_zone()
+        assert zone.heatmap_points == []
+
+    def test_accepts_heatmap_points(self) -> None:
+        points = [
+            IntensityPoint(x=0.0, y=0.0, intensity=0.1),
+            IntensityPoint(x=5.0, y=5.0, intensity=0.9),
+        ]
+        zone = Zone(
+            id="z1",
+            name="Zone 1",
+            capacity=500,
+            heatmap_points=points,
+        )
+        assert len(zone.heatmap_points) == 2
+        assert zone.heatmap_points[0].intensity == 0.1
+        assert zone.heatmap_points[1].intensity == 0.9
+
+    def test_rejects_invalid_heatmap_point(self) -> None:
+        """IntensityPoint validation still fires when nested in Zone."""
+        with pytest.raises(ValidationError, match="greater than or equal to 0"):
+            Zone(
+                id="z1",
+                name="Zone 1",
+                capacity=500,
+                heatmap_points=[
+                    IntensityPoint(x=0.0, y=0.0, intensity=-0.5),
+                ],
+            )
+
+
+# ---------------------------------------------------------------------------
+# HistoricalMetrics tests
+# ---------------------------------------------------------------------------
+
+
+class TestHistoricalMetrics:
+    """Tests for the HistoricalMetrics post-event summary model."""
+
+    def test_valid_construction(self) -> None:
+        hm = HistoricalMetrics(
+            top_bottlenecks=["zone_a", "zone_c"],
+            critical_density_duration_minutes=42,
+            executive_summary="Peak congestion at Gate B during halftime.",
+        )
+        assert hm.top_bottlenecks == ["zone_a", "zone_c"]
+        assert hm.critical_density_duration_minutes == 42
+        assert "Gate B" in hm.executive_summary
+
+    def test_rejects_empty_top_bottlenecks(self) -> None:
+        with pytest.raises(ValidationError):
+            HistoricalMetrics(
+                top_bottlenecks=[],
+                critical_density_duration_minutes=10,
+                executive_summary="Summary.",
+            )
+
+    def test_rejects_negative_duration(self) -> None:
+        with pytest.raises(ValidationError, match="greater than or equal to 0"):
+            HistoricalMetrics(
+                top_bottlenecks=["zone_a"],
+                critical_density_duration_minutes=-1,
+                executive_summary="Summary.",
+            )
+
+    def test_accepts_zero_duration(self) -> None:
+        hm = HistoricalMetrics(
+            top_bottlenecks=["zone_a"],
+            critical_density_duration_minutes=0,
+            executive_summary="No critical density events.",
+        )
+        assert hm.critical_density_duration_minutes == 0
+
+    def test_rejects_empty_executive_summary(self) -> None:
+        with pytest.raises(ValidationError, match="at least 1"):
+            HistoricalMetrics(
+                top_bottlenecks=["zone_a"],
+                critical_density_duration_minutes=10,
+                executive_summary="",
+            )
+
+    def test_frozen(self) -> None:
+        hm = HistoricalMetrics(
+            top_bottlenecks=["zone_a"],
+            critical_density_duration_minutes=10,
+            executive_summary="Summary.",
+        )
+        with pytest.raises(ValidationError):
+            hm.critical_density_duration_minutes = 99  # type: ignore[misc]

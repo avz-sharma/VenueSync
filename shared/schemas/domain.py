@@ -24,6 +24,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # ---------------------------------------------------------------------------
 
 
+class IntensityPoint(BaseModel):
+    """A single spatial data point for heat-density mapping.
+
+    Represents a coordinate within a zone's 2-D layout with an associated
+    intensity value.  The preprocessor populates these points (Rule C);
+    they are consumed by the frontend canvas for heatmap rendering.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    x: float = Field(..., description="Horizontal coordinate in the zone layout")
+    y: float = Field(..., description="Vertical coordinate in the zone layout")
+    intensity: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Normalized intensity value (0.0 = empty, 1.0 = maximum density)",
+    )
+
+
 class Zone(BaseModel):
     """A discrete physical area within the venue."""
 
@@ -35,6 +55,14 @@ class Zone(BaseModel):
     adjacent_zones: list[str] = Field(
         default_factory=list,
         description="IDs of directly connected zones for graph traversal",
+    )
+    is_covered: bool = Field(
+        default=False,
+        description="Indicates whether the zone is covered/indoors (for rain simulation)",
+    )
+    heatmap_points: list[IntensityPoint] = Field(
+        default_factory=list,
+        description="Spatial intensity data for heat-density visualization — populated by preprocessor (Rule C)",
     )
 
 
@@ -123,6 +151,34 @@ class Staff(BaseModel):
     zone_id: str = Field(..., min_length=1, description="Currently assigned zone")
     status: Literal["on_duty", "off_duty", "break", "responding"] = Field(
         ..., description="Current operational status"
+    )
+
+
+
+class HistoricalMetrics(BaseModel):
+    """Post-event summary produced after a session concludes.
+
+    Contains aggregated insights for organizer debrief and reporting.
+    This model is **not** part of the live VenueSnapshot; it is generated
+    by the preprocessor once the event window closes.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    top_bottlenecks: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Zone IDs or names identified as major congestion points",
+    )
+    critical_density_duration_minutes: int = Field(
+        ...,
+        ge=0,
+        description="Total minutes any zone exceeded its critical density threshold",
+    )
+    executive_summary: str = Field(
+        ...,
+        min_length=1,
+        description="Human-readable post-event summary for organizer debrief",
     )
 
 

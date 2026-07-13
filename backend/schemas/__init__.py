@@ -8,7 +8,9 @@ backend code can import from either location::
 """
 
 from shared.schemas.domain import (
+    HistoricalMetrics,
     Incident,
+    IntensityPoint,
     Occupancy,
     Staff,
     VenueSnapshot,
@@ -18,7 +20,9 @@ from shared.schemas.domain import (
 from .reasoning import ActionRecommendation, ReasoningCycleOutput
 
 __all__: list[str] = [
+    "HistoricalMetrics",
     "Incident",
+    "IntensityPoint",
     "Occupancy",
     "Staff",
     "VenueSnapshot",

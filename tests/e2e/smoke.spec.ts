@@ -34,11 +34,11 @@ test.describe('VenueSync — Smoke Test', () => {
     // 3. Wait for the Reasoning Trace Panel to appear
     //    The ReasoningTracePanel renders with "AI Judgment Trace" header text
     //    and the RecommendationQueue renders "AI Recommendation Queue"
-    const reasoningTracePanel = page.locator('text=AI Judgment Trace');
+    const reasoningTracePanel = page.locator('text=AI Judgment Trace').first();
     await expect(reasoningTracePanel).toBeVisible({ timeout: 30_000 });
 
     // Additionally verify the recommendation queue is showing action cards
-    const recommendationQueue = page.locator('text=AI Recommendation Queue');
+    const recommendationQueue = page.locator('text=AI Logic Queue');
     await expect(recommendationQueue).toBeVisible({ timeout: 10_000 });
   });
 });

@@ -1,6 +1,9 @@
 import uuid
 from typing import List
+
 from pydantic import BaseModel, Field
+
+from shared.schemas.domain import VenueSnapshot
 
 
 class ActionRecommendation(BaseModel):
@@ -36,4 +39,18 @@ class ReasoningCycleOutput(BaseModel):
     degraded_mode: bool = Field(
         default=False,
         description="Flag indicating if the system is running in fallback/degraded mode",
+    )
+
+
+class DebriefRequest(BaseModel):
+    """Request body for POST /api/analytics/debrief.
+
+    Accepts an ordered list of VenueSnapshot objects that represent a complete
+    event run sequence.  The list must contain at least one snapshot (enforced
+    by the route handler, not here, to return a meaningful HTTP 422).
+    """
+
+    snapshots: List[VenueSnapshot] = Field(
+        ...,
+        description="Ordered sequence of VenueSnapshot objects from a completed event run.",
     )

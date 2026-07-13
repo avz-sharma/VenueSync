@@ -67,6 +67,7 @@ _VENUE_ZONES: list[dict[str, str | int | list[str]]] = [
         "id": "concourse_a",
         "name": "Concourse A",
         "capacity": 3000,
+        "is_covered": True,
         "adjacent_zones": [
             "gate_north",
             "stand_east",
@@ -78,6 +79,7 @@ _VENUE_ZONES: list[dict[str, str | int | list[str]]] = [
         "id": "concourse_b",
         "name": "Concourse B",
         "capacity": 3000,
+        "is_covered": True,
         "adjacent_zones": [
             "gate_south",
             "stand_west",
@@ -101,6 +103,7 @@ _VENUE_ZONES: list[dict[str, str | int | list[str]]] = [
         "id": "vip_lounge",
         "name": "VIP Lounge",
         "capacity": 500,
+        "is_covered": True,
         "adjacent_zones": ["concourse_a", "concourse_b"],
     },
     {
