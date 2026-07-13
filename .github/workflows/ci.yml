@@ -1,4 +1,4 @@
-name: Stadium Pulse CI
+name: VenueSync
 
 on:
   push:
@@ -15,6 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Normalize line endings
+        run: |
+          git add --renormalize .
+          git diff --cached --exit-code
+
+      - name: Check file attributes in CI
+        run: |
+          git check-attr -a tests/test_reasoning.py
+          git check-attr -a tests/test_upload.py
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
