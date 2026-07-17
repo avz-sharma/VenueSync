@@ -150,19 +150,19 @@ assets_path = Path("frontend/dist/assets")
 if assets_path.is_dir():
     app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
 
+
 @app.get("/{full_path:path}")
 async def spa_fallback(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API route not found")
-    
+
     candidate = Path("frontend/dist") / full_path
     if candidate.is_file():
         return FileResponse(candidate)
-        
+
     index_path = Path("frontend/dist/index.html")
     if index_path.is_file():
         return FileResponse(index_path)
-        
+
     # If the frontend is not built at all, just return 404
     raise HTTPException(status_code=404, detail="Frontend not built")
-
