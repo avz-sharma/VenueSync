@@ -33,9 +33,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application code
 COPY backend/ ./backend/
+COPY shared/ ./shared/
 
 # Copy built frontend assets from builder
 COPY --from=builder /app/frontend/dist ./frontend/dist
+
+# Validate import graph during build
+RUN python -c "import backend.main"
 
 # Ensure we expand $PORT properly with shell form
 CMD uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8080}
