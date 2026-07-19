@@ -10,61 +10,45 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
-from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from backend.adapters import get_adapter
 from backend.adapters.base import DataSourceAdapter
-from backend.preprocessor.core import preprocess_snapshot, process_historical_run
+from backend.preprocessor.core import (
+    preprocess_snapshot,
+    process_historical_run,
+    compute_pre_alert_zones,
+)
 from backend.preprocessor.intervention import (
     InterventionStateManager,
     compute_gate_closure_targets,
     compute_rain_shift_targets,
 )
 from backend.reasoning.core import generate_actions, generate_debrief
+from backend.reasoning.pre_alert import generate_pre_alert
+from backend.reasoning.operator_qa import generate_operator_response
+from backend.reasoning.scenario_planner import generate_scenario
 from backend.schemas import VenueSnapshot
 from backend.schemas.reasoning import (
     ActionRecommendation,
     DebriefRequest,
+    GenerateScenarioRequest,
+    OperatorQueryRequest,
+    OperatorQueryResponse,
+    PreAlertOutput,
     ReasoningCycleOutput,
+    ScenarioSpec,
 )
 from shared.schemas.domain import HistoricalMetrics, Incident, Occupancy
+from backend.api.state import VenueSyncState, get_app_state
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# ---------------------------------------------------------------------------
-# Global State & Cache
-# ---------------------------------------------------------------------------
-
-_active_adapter: DataSourceAdapter | None = None
-_reason_lock = asyncio.Lock()
-_intervention_manager: InterventionStateManager | None = None
-
-# Debounce cache for LLM reasoning cycle
-_last_reason_time: float = 0.0
-_cached_reason_output: ReasoningCycleOutput | None = None
-
-# Known recommendations from reasoning engine
-_known_actions: Dict[str, ActionRecommendation] = {}
-
-# Approved actions (for idempotency tracking)
-_approved_actions: Dict[str, Dict[str, Any]] = {}
-
-
-def get_active_adapter() -> DataSourceAdapter:
-    """Retrieve or lazily initialize the active data source adapter."""
-    global _active_adapter
-    if _active_adapter is None:
-        source = os.environ.get("DATA_SOURCE", "synthetic")
-        logger.info(f"Initializing active data source adapter: {source}")
-        _active_adapter = get_adapter(source)
-    return _active_adapter
 
 
 # ---------------------------------------------------------------------------
@@ -111,24 +95,14 @@ class RainSimulationResponse(BaseModel):
 
 
 @router.get("/snapshot", response_model=VenueSnapshot)
-async def get_snapshot() -> VenueSnapshot:
+async def get_snapshot(state: VenueSyncState = Depends(get_app_state)) -> VenueSnapshot:
     """Fetch the current canonical VenueSnapshot from the active Data Adapter."""
-    adapter = get_active_adapter()
+    adapter = state.get_adapter()
     snapshot = await adapter.get_snapshot()
 
-    global _intervention_manager
-    if _intervention_manager is not None:
+    if state.intervention_manager is not None:
         now = time.time()
-        if _intervention_manager.is_complete(now):
-            # Once the transition is complete, we leave the manager active
-            # so the target state persists, or we can clear it.
-            # If we clear it, the synthetic adapter might snap back to its
-            # original simulation curve unless we updated its baseline.
-            # For this demo, we keep the manager active indefinitely after completion
-            # so the final blended state (alpha=1.0) persists.
-            blended = _intervention_manager.get_blended_occupancies(now)
-        else:
-            blended = _intervention_manager.get_blended_occupancies(now)
+        blended = state.intervention_manager.get_blended_occupancies(now)
 
         new_occupancies = []
         for occ in snapshot.occupancies:
@@ -156,101 +130,113 @@ async def get_snapshot() -> VenueSnapshot:
 
 
 @router.post("/reason", response_model=ReasoningCycleOutput)
-async def run_reason() -> ReasoningCycleOutput:
+async def run_reason(
+    state: VenueSyncState = Depends(get_app_state),
+) -> ReasoningCycleOutput:
     """Trigger the Reasoning Engine with a 15-second debounce mechanism.
 
     If a request is received within 15 seconds of the last execution, the cached
     ReasoningCycleOutput is returned instead of calling the LLM again.
     """
-    global _last_reason_time, _cached_reason_output
-
-    async with _reason_lock:
+    async with state.reason_lock:
+        state.prune_expired_actions()
         current_time = time.time()
         if (
-            _cached_reason_output is not None
-            and (current_time - _last_reason_time) < 15.0
+            state.cached_reason_output is not None
+            and (current_time - state.last_reason_time) < 15.0
         ):
             logger.info("Returning cached reasoning output (debounced)")
-            return _cached_reason_output
+            return state.cached_reason_output
 
         logger.info("Triggering new LLM reasoning cycle")
-        adapter = get_active_adapter()
+        adapter = state.get_adapter()
         snapshot = await adapter.get_snapshot()
         processed_state = preprocess_snapshot(snapshot)
 
-        # Generate actions (handles LLM calls, retries, fallbacks)
-        output = generate_actions(processed_state)
+        # Generate actions via asyncio.to_thread to avoid blocking the event loop
+        output = await asyncio.to_thread(generate_actions, processed_state)
 
         # Store generated recommendations in the known actions registry
         for action in output.actions:
-            _known_actions[action.id] = action
+            state.known_actions[action.id] = action
 
         # Update debounce cache
-        _last_reason_time = current_time
-        _cached_reason_output = output
+        state.last_reason_time = current_time
+        state.cached_reason_output = output
 
         return output
 
 
 @router.post("/actions/{action_id}/approve", response_model=ApproveResponse)
-async def approve_action(action_id: str) -> ApproveResponse:
+async def approve_action(
+    action_id: str, state: VenueSyncState = Depends(get_app_state)
+) -> ApproveResponse:
     """Approve a recommended action by ID.
 
     Ensures that if the same action ID is approved multiple times (e.g., due to a
     double-click), the underlying state mutation is only executed once.
+
+    Every newly approved action instantiates a fresh InterventionStateManager,
+    completely replacing the old one. The entire state mutation is wrapped in
+    the reason lock to prevent concurrent API calls from clobbering state.
     """
-    # Check if this action has already been approved
-    if action_id in _approved_actions:
-        logger.info(
-            f"Action approval request for {action_id} ignored (already approved)"
-        )
-        return ApproveResponse(
-            status="success",
-            action_id=action_id,
-            already_approved=True,
-            message="Action was already approved (idempotent)",
-        )
+    async with state.reason_lock:
+        # Check if this action has already been approved
+        if action_id in state.approved_actions:
+            logger.info(
+                f"Action approval request for {action_id} ignored (already approved)"
+            )
+            return ApproveResponse(
+                status="success",
+                action_id=action_id,
+                already_approved=True,
+                message="Action was already approved (idempotent)",
+            )
 
-    # Verify that the action ID exists in the registry of known actions
-    if action_id not in _known_actions:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Action ID '{action_id}' not found. It may have expired or was never generated.",
-        )
+        # Verify that the action ID exists in the registry of known actions
+        if action_id not in state.known_actions:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Action ID '{action_id}' not found. It may have expired or was never generated.",
+            )
 
-    # Perform the underlying state mutation (simulated via logging and recording approval state)
-    logger.info(f"Executing state mutation for action {action_id}")
-    action_info = _known_actions[action_id]
+        # Perform the underlying state mutation
+        logger.info(f"Executing state mutation for action {action_id}")
+        action_info = state.known_actions[action_id]
 
-    global _intervention_manager
-    if _intervention_manager is None:
-        adapter = get_active_adapter()
+        adapter = state.get_adapter()
         snapshot = await adapter.get_snapshot()
         zones = await adapter.get_venue_graph()
         source_occs = {o.zone_id: o.count for o in snapshot.occupancies}
 
-        # Determine targets based on action context
-        # If action target zones contains a gate, simulate gate closure
-        gate_targets = [z for z in action_info.target_zones if "gate" in z]
-        if "close" in action_info.action_type.lower() and gate_targets:
+        # Route action type to the correct intervention computation
+        if action_info.action_type == "open_emergency_exit":
+            # Gate closure: redirect from the first target zone (the gate)
+            gate_targets = action_info.target_zones
+            gate_id = gate_targets[0] if gate_targets else "gate_north"
             target_occs = compute_gate_closure_targets(
-                zones, snapshot.occupancies, gate_targets[0]
+                zones, snapshot.occupancies, gate_id
             )
-        else:
-            # Fallback to generic weather/rain shift for any general redirect
+        elif action_info.action_type == "redirect_crowd":
+            # Weather/general redirect: shift crowd to covered zones
             target_occs = compute_rain_shift_targets(zones, snapshot.occupancies)
+        else:
+            # dispatch_medical, dispatch_security, broadcast_announcement
+            # These are dispatch/announcement actions — no stadium-wide crowd shift
+            target_occs = source_occs.copy()
 
-        _intervention_manager = InterventionStateManager(
+        # Always instantiate a fresh InterventionStateManager, replacing any old one
+        state.intervention_manager = InterventionStateManager(
             approved_at=time.time(),
             source_occupancies=source_occs,
             target_occupancies=target_occs,
             duration=12.0,
         )
 
-    _approved_actions[action_id] = {
-        "timestamp": time.time(),
-        "action": action_info,
-    }
+        state.approved_actions[action_id] = {
+            "timestamp": time.time(),
+            "action": action_info,
+        }
 
     return ApproveResponse(
         status="success",
@@ -261,21 +247,22 @@ async def approve_action(action_id: str) -> ApproveResponse:
 
 
 @router.get("/demo/load-scenario", response_model=LoadScenarioResponse)
-async def load_scenario() -> LoadScenarioResponse:
+async def load_scenario(
+    state: VenueSyncState = Depends(get_app_state),
+) -> LoadScenarioResponse:
     """Force the active data source adapter to override its state with a critical scenario.
 
     Loads a tense event state:
     - Zone 'gate_north' is at 98% capacity.
     - Active critical medical incident reported at 'gate_north'.
     """
-    adapter = get_active_adapter()
+    adapter = state.get_adapter()
 
     # Retrieve current topology and roster from active adapter to keep everything realistic
     zones = await adapter.get_venue_graph()
     staff = await adapter.get_staff_roster()
 
-    tz = ZoneInfo("Asia/Kolkata")
-    now = datetime.now(tz)
+    now = datetime.now(timezone.utc)
 
     occupancies = []
     for z in zones:
@@ -318,9 +305,8 @@ async def load_scenario() -> LoadScenarioResponse:
     adapter.set_override_snapshot(snapshot)
 
     # Clear reasoning cache and any active intervention
-    global _cached_reason_output, _intervention_manager
-    _cached_reason_output = None
-    _intervention_manager = None
+    state.cached_reason_output = None
+    state.intervention_manager = None
 
     logger.info("Loaded tense demo scenario (gate_north critical medical incident)")
 
@@ -331,14 +317,15 @@ async def load_scenario() -> LoadScenarioResponse:
 
 
 @router.post("/demo/gate-closure", response_model=GateClosureResponse)
-async def simulate_gate_closure(body: GateClosureRequest) -> GateClosureResponse:
+async def simulate_gate_closure(
+    body: GateClosureRequest, state: VenueSyncState = Depends(get_app_state)
+) -> GateClosureResponse:
     """Simulate closing a gate and redirecting crowd to alternatives.
 
     This acts as a scenario override and sets up a progressive crowd
     balancing intervention over a 12-second window.
     """
-    global _intervention_manager, _cached_reason_output
-    adapter = get_active_adapter()
+    adapter = state.get_adapter()
     snapshot = await adapter.get_snapshot()
     zones = await adapter.get_venue_graph()
 
@@ -347,16 +334,15 @@ async def simulate_gate_closure(body: GateClosureRequest) -> GateClosureResponse
         zones, snapshot.occupancies, body.gate_id
     )
 
-    _intervention_manager = InterventionStateManager(
+    state.intervention_manager = InterventionStateManager(
         approved_at=time.time(),
         source_occupancies=source_occs,
         target_occupancies=target_occs,
         duration=12.0,
     )
 
-    # Add an incident to reflect the reality
-    tz = ZoneInfo("Asia/Kolkata")
-    now = datetime.now(tz)
+    # Add an incident to reflect the reality and wire it into the adapter
+    now = datetime.now(timezone.utc)
     new_incident = Incident(
         id=f"inc_gate_closure_{int(now.timestamp())}",
         zone_id=body.gate_id,
@@ -365,9 +351,32 @@ async def simulate_gate_closure(body: GateClosureRequest) -> GateClosureResponse
         reported_at=now,
     )
 
-    # We must patch the active adapter if it supports overrides,
-    # but the simplest is just clearing reason cache so the next cycle sees the blended state.
-    _cached_reason_output = None
+    # Build a patched snapshot with the new incident and updated occupancies
+    patched_occupancies = []
+    for occ in snapshot.occupancies:
+        if occ.zone_id in target_occs:
+            patched_occupancies.append(
+                Occupancy(
+                    zone_id=occ.zone_id,
+                    count=target_occs[occ.zone_id],
+                    capacity=occ.capacity,
+                    pct_capacity=occ.pct_capacity,
+                    trend=occ.trend,
+                )
+            )
+        else:
+            patched_occupancies.append(occ)
+
+    patched_snapshot = VenueSnapshot(
+        timestamp=now,
+        zones=snapshot.zones,
+        occupancies=patched_occupancies,
+        incidents=list(snapshot.incidents) + [new_incident],
+        staff=snapshot.staff,
+    )
+    adapter.set_override_snapshot(patched_snapshot)
+
+    state.cached_reason_output = None
 
     return GateClosureResponse(
         status="success",
@@ -380,30 +389,30 @@ async def simulate_gate_closure(body: GateClosureRequest) -> GateClosureResponse
 
 
 @router.post("/demo/rain-simulation", response_model=RainSimulationResponse)
-async def simulate_rain() -> RainSimulationResponse:
+async def simulate_rain(
+    state: VenueSyncState = Depends(get_app_state),
+) -> RainSimulationResponse:
     """Simulate sudden rain, causing crowd to seek covered zones.
 
     This sets up a progressive crowd balancing intervention over a 12-second window.
     """
-    global _intervention_manager, _cached_reason_output
-    adapter = get_active_adapter()
+    adapter = state.get_adapter()
     snapshot = await adapter.get_snapshot()
     zones = await adapter.get_venue_graph()
 
     source_occs = {o.zone_id: o.count for o in snapshot.occupancies}
     target_occs = compute_rain_shift_targets(zones, snapshot.occupancies)
 
-    _intervention_manager = InterventionStateManager(
+    state.intervention_manager = InterventionStateManager(
         approved_at=time.time(),
         source_occupancies=source_occs,
         target_occupancies=target_occs,
         duration=12.0,
     )
 
-    tz = ZoneInfo("Asia/Kolkata")
-    now = datetime.now(tz)
+    now = datetime.now(timezone.utc)
 
-    _cached_reason_output = None
+    state.cached_reason_output = None
 
     covered_zones = [z.id for z in zones if z.is_covered]
 
@@ -466,7 +475,10 @@ async def run_debrief(body: DebriefRequest) -> HistoricalMetrics:
         # --- Step 2: LLM reasoning for executive summary (Rule B) ---
         # generate_debrief() handles its own retry + fallback internally.
         # Raw snapshots are NOT passed — only the compressed metrics dict (Rule A).
-        result: HistoricalMetrics = generate_debrief(compressed_metrics)
+        # Wrapped in asyncio.to_thread to avoid blocking the event loop.
+        result: HistoricalMetrics = await asyncio.to_thread(
+            generate_debrief, compressed_metrics
+        )
 
         # --- Step 3: Final schema validation gate (Rule B) ---
         # Validates the object returned by generate_debrief before it leaves
@@ -504,3 +516,210 @@ async def run_debrief(body: DebriefRequest) -> HistoricalMetrics:
             status_code=500,
             detail="An unexpected error occurred while generating the debrief summary.",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Pre-Alert Engine endpoint (Component 1)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/pre-alert", response_model=PreAlertOutput)
+async def get_pre_alert(
+    state: VenueSyncState = Depends(get_app_state),
+) -> PreAlertOutput:
+    """Return predictive risk assessment for zones approaching critical density.
+
+    Pipeline:
+    1. Fetch current snapshot from the active adapter.
+    2. Deterministic trajectory scoring via ``compute_pre_alert_zones()`` (Rule C).
+    3. If any zones qualify, pass preprocessed trajectory data to the Pre-Alert
+       LLM reasoning engine (Rule A — no raw data).
+    4. Validate output against ``PreAlertOutput`` schema (Rule B).
+    """
+    adapter = state.get_adapter()
+    snapshot = await adapter.get_snapshot()
+
+    # Step 1: Deterministic pre-processing (Rule C)
+    pre_alert_zones = compute_pre_alert_zones(snapshot)
+
+    if not pre_alert_zones:
+        return PreAlertOutput(alerts=[], degraded_mode=False)
+
+    # Step 2: LLM reasoning for preemptive recommendations (Rule B)
+    output = await asyncio.to_thread(generate_pre_alert, pre_alert_zones)
+    return output
+
+
+# ---------------------------------------------------------------------------
+# Operator Chat Q&A endpoint (Component 2)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/operator/query", response_model=OperatorQueryResponse)
+async def operator_query(
+    body: OperatorQueryRequest, state: VenueSyncState = Depends(get_app_state)
+) -> OperatorQueryResponse:
+    """Answer a natural-language question from the venue operator.
+
+    Pipeline:
+    1. Fetch current snapshot and preprocess it (Rule A/C — LLM receives
+       only preprocessed dict, never raw snapshot).
+    2. Pass preprocessed state + sanitized query to the Operator Q&A engine.
+    3. Validate output against ``OperatorQueryResponse`` schema (Rule B).
+
+    Throttled with a 5-second debounce (separate from the 15s reasoning debounce).
+    """
+    current_time = time.time()
+    if (
+        state.cached_operator_response is not None
+        and (current_time - state.last_operator_query_time) < 5.0
+    ):
+        logger.info("Returning cached operator response (5s throttled)")
+        return state.cached_operator_response
+
+    adapter = state.get_adapter()
+    snapshot = await adapter.get_snapshot()
+    processed_state = preprocess_snapshot(snapshot)
+
+    # LLM call — operator query is treated as untrusted input (Rule D)
+    output = await asyncio.to_thread(
+        generate_operator_response, body.query, processed_state
+    )
+
+    state.last_operator_query_time = current_time
+    state.cached_operator_response = output
+
+    return output
+
+
+# ---------------------------------------------------------------------------
+# GenAI Scenario Generator endpoint (Component 3 — Advanced option)
+# ---------------------------------------------------------------------------
+
+
+class GenerateScenarioResponse(BaseModel):
+    """Response for the GenAI scenario generator."""
+
+    status: str
+    scenario: ScenarioSpec
+    message: str
+
+
+@router.post("/demo/generate-scenario", response_model=GenerateScenarioResponse)
+async def generate_scenario_endpoint(
+    body: GenerateScenarioRequest, state: VenueSyncState = Depends(get_app_state)
+) -> GenerateScenarioResponse:
+    """Generate a novel event scenario from a natural-language description.
+
+    Pipeline:
+    1. Retrieve available zone IDs from the venue topology.
+    2. Pass description + zone IDs to the GenAI Scenario Planner (Rule D —
+       description is treated as untrusted input).
+    3. Validate output against ``ScenarioSpec`` schema (Rule B).
+    4. Translate scenario intents into deterministic occupancy mutations
+       via the intervention engine (Rule C — GenAI never does arithmetic).
+
+    This coexists with the hardcoded demo scenarios as an "Advanced" option.
+    """
+    adapter = state.get_adapter()
+    snapshot = await adapter.get_snapshot()
+    zones = await adapter.get_venue_graph()
+    available_zone_ids = [z.id for z in zones]
+
+    # Step 1: GenAI generates the scenario spec
+    scenario_spec = await asyncio.to_thread(
+        generate_scenario, body.description, available_zone_ids
+    )
+
+    # Step 2: Translate intents into deterministic occupancy mutations (Rule C)
+    source_occs = {o.zone_id: o.count for o in snapshot.occupancies}
+    target_occs = dict(source_occs)  # Start from current state
+    zone_capacity = {o.zone_id: o.capacity for o in snapshot.occupancies}
+
+    new_incidents: list[Incident] = []
+    now = datetime.now(timezone.utc)
+
+    for intent in scenario_spec.intents:
+        zid = intent.target_zone
+        if zid not in zone_capacity:
+            continue  # Skip invalid zone IDs
+
+        cap = zone_capacity[zid]
+
+        if intent.intent_type == "overwhelm":
+            # Map intensity 0.0-1.0 → target occupancy 60%-99% of capacity
+            target_pct = 0.60 + (intent.intensity * 0.39)
+            target_occs[zid] = int(cap * target_pct)
+
+        elif intent.intent_type == "evacuate":
+            # Map intensity 0.0-1.0 → target occupancy 5%-40% of capacity
+            target_pct = 0.40 - (intent.intensity * 0.35)
+            target_occs[zid] = max(0, int(cap * target_pct))
+
+        elif intent.intent_type == "incident_inject":
+            # Determine severity from intensity
+            if intent.intensity >= 0.8:
+                severity = "critical"
+            elif intent.intensity >= 0.6:
+                severity = "high"
+            elif intent.intensity >= 0.3:
+                severity = "medium"
+            else:
+                severity = "low"
+
+            new_incidents.append(
+                Incident(
+                    id=f"inc_genai_{zid}_{int(now.timestamp())}",
+                    zone_id=zid,
+                    type="security",
+                    severity=severity,
+                    reported_at=now,
+                )
+            )
+
+        elif intent.intent_type == "capacity_shift":
+            # Shift crowd toward this zone (increase by intensity * 30%)
+            boost = int(cap * intent.intensity * 0.30)
+            target_occs[zid] = min(cap * 3, source_occs.get(zid, 0) + boost)
+
+    # Step 3: Set up intervention state manager for progressive crowd shift
+    state.intervention_manager = InterventionStateManager(
+        approved_at=time.time(),
+        source_occupancies=source_occs,
+        target_occupancies=target_occs,
+        duration=float(scenario_spec.estimated_duration_seconds),
+    )
+
+    # Step 4: If incidents were generated, patch the snapshot
+    if new_incidents:
+        patched_occupancies = []
+        for occ in snapshot.occupancies:
+            if occ.zone_id in target_occs:
+                patched_occupancies.append(
+                    Occupancy(
+                        zone_id=occ.zone_id,
+                        count=target_occs[occ.zone_id],
+                        capacity=occ.capacity,
+                        pct_capacity=occ.pct_capacity,
+                        trend=occ.trend,
+                    )
+                )
+            else:
+                patched_occupancies.append(occ)
+
+        patched_snapshot = VenueSnapshot(
+            timestamp=now,
+            zones=snapshot.zones,
+            occupancies=patched_occupancies,
+            incidents=list(snapshot.incidents) + new_incidents,
+            staff=snapshot.staff,
+        )
+        adapter.set_override_snapshot(patched_snapshot)
+
+    state.cached_reason_output = None
+
+    return GenerateScenarioResponse(
+        status="success",
+        scenario=scenario_spec,
+        message=f"AI scenario '{scenario_spec.name}' generated and applied. {scenario_spec.narrative}",
+    )

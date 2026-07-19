@@ -1,8 +1,31 @@
-import React, { useEffect, useState, useRef } from 'react';
-import type { VenueSnapshot, ReasoningCycleOutput } from '../types';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import type { VenueSnapshot, ReasoningCycleOutput, PreAlertOutput } from '../types';
 import { ZoneMap } from './ZoneMap';
 import { RecommendationQueue } from './RecommendationQueue';
 import { SidebarRoster } from './SidebarRoster';
+import { LiveNarratorBar } from './LiveNarratorBar';
+import { OperatorChatPanel } from './OperatorChatPanel';
+import { PreAlertBadge } from './PreAlertBadge';
+
+const SCENARIOS = [
+  {
+    id: 'tense_medical',
+    name: '1. Critical Incident (Tense)',
+    endpoint: '/api/demo/load-scenario',
+    method: 'GET',
+    successMsg: "Critical Incident Demo Scenario loaded successfully! 'gate_north' is at 98% with an active medical incident.",
+  },
+  {
+    id: 'gate_closure',
+    name: '2. Gate Closure Simulation',
+    endpoint: '/api/demo/gate-closure',
+    method: 'POST',
+    body: { gate_id: 'gate_north' },
+    successMsg: 'Gate Closure Simulation triggered successfully! North gate closed. Rerouting in progress.',
+    simName: 'Gate Closure',
+    affected: ['gate_north', 'gate_south', 'concourse_a', 'concourse_b'],
+  }
+] as const;
 
 // Micro-component for Cache Cooldown Progress Circle
 function CooldownRing({ lastReasonTime }: { lastReasonTime: number }): React.JSX.Element {
@@ -115,6 +138,9 @@ export function Dashboard(): React.JSX.Element {
   // Connection / general error state
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
+  // Pre-Alert Engine state
+  const [preAlerts, setPreAlerts] = useState<PreAlertOutput | null>(null);
+
   // Ref to track active interval for cleanup
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -147,62 +173,56 @@ export function Dashboard(): React.JSX.Element {
   }, [connectionError]);
 
   // API Call - Fetch snapshot
-  const fetchSnapshot = async (isInitial = false): Promise<VenueSnapshot | null> => {
+  const fetchSnapshot = useCallback(async (isInitial = false): Promise<VenueSnapshot | null> => {
     if (isInitial) setLoadingSnapshot(true);
     setIsFetching(true);
     try {
       const res = await fetch('/api/snapshot');
-      if (!res.ok) {
-        throw new Error(`Failed to fetch venue snapshot: HTTP status ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`HTTP status ${res.status}`);
       const data: VenueSnapshot = await res.json();
       setSnapshot(data);
       setConnectionError(null);
       setErrorCount(0);
       return data;
-    } catch (err: any) {
-      console.error(err);
-      setConnectionError(err.message || 'API Server is currently unreachable.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'API Server unreachable';
+      setConnectionError(msg);
       setErrorCount((prev) => prev + 1);
       return null;
     } finally {
       setIsFetching(false);
       if (isInitial) setLoadingSnapshot(false);
     }
-  };
+  }, []);
 
   // API Call - Trigger Reasoning Engine
-  const runReasoning = async (force = false): Promise<void> => {
-    // If already loading reasoning, ignore unless forced
+  const runReasoning = useCallback(async (force = false): Promise<void> => {
     if (loadingReasoning && !force) return;
-
-    const currentTime = Date.now();
-    const timeSinceLastReasoning = currentTime - lastReasonTimeRef.current;
-
-    // Respect backend's 15s debounce unless forcing (e.g. demo scenario load)
-    if (!force && timeSinceLastReasoning < 15000) {
-      console.log('Skipping reasoning fetch (client-side debounced)');
-      return;
-    }
-
     setLoadingReasoning(true);
     try {
-      const res = await fetch('/api/reason', {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        throw new Error(`Failed to trigger reasoning: HTTP status ${res.status}`);
-      }
+      const res = await fetch('/api/reason', { method: 'POST' });
       const data: ReasoningCycleOutput = await res.json();
       setReasoning(data);
       const now = Date.now();
       lastReasonTimeRef.current = now;
       setLastReasonTime(now);
-    } catch (err: any) {
-      console.error('Reasoning call failed:', err);
-      // We don't crash, we just log and show warning if needed
+    } catch (err) {
+      console.error('Reasoning failed:', err);
     } finally {
       setLoadingReasoning(false);
+    }
+  }, [loadingReasoning]);
+
+  // API Call - Fetch Pre-Alerts
+  const fetchPreAlerts = async (): Promise<void> => {
+    try {
+      const res = await fetch('/api/pre-alert');
+      if (!res.ok) return;
+      const data: PreAlertOutput = await res.json();
+      setPreAlerts(data);
+    } catch (err: unknown) {
+      // Pre-alerts are non-critical — silently degrade
+      console.warn('Pre-alert fetch failed:', err);
     }
   };
 
@@ -363,6 +383,8 @@ export function Dashboard(): React.JSX.Element {
       if (snap) {
         // Run initial reasoning cycle on initial load
         await runReasoning(true);
+        // Fetch pre-alerts on initial load
+        await fetchPreAlerts();
         startPolling();
       }
     };
@@ -489,10 +511,10 @@ export function Dashboard(): React.JSX.Element {
             <button
               onClick={() =>
                 void handleTriggerScenario(
-                  '/api/demo/load-scenario',
-                  'GET',
+                  SCENARIOS[0].endpoint,
+                  SCENARIOS[0].method,
                   undefined,
-                  "Critical Incident Demo Scenario loaded successfully! 'gate_north' is at 98% with an active medical incident."
+                  SCENARIOS[0].successMsg
                 )
               }
               disabled={scenarioLoading}
@@ -545,32 +567,32 @@ export function Dashboard(): React.JSX.Element {
                 <button
                   onClick={() =>
                     void handleTriggerScenario(
-                      '/api/demo/load-scenario',
-                      'GET',
+                      SCENARIOS[0].endpoint,
+                      SCENARIOS[0].method,
                       undefined,
-                      "Critical Incident Demo Scenario loaded successfully! 'gate_north' is at 98% with an active medical incident."
+                      SCENARIOS[0].successMsg
                     )
                   }
                   className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium text-slate-850 hover:bg-slate-50 transition-colors flex flex-col gap-0.5"
                 >
-                  <span className="text-slate-900 font-semibold">1. Critical Incident (Tense)</span>
+                  <span className="text-slate-900 font-semibold">{SCENARIOS[0].name}</span>
                   <span className="text-xs text-slate-400">98% Gate North flood + Active medical emergency.</span>
                 </button>
 
                 <button
                   onClick={() =>
                     void handleTriggerScenario(
-                      '/api/demo/gate-closure',
-                      'POST',
-                      { gate_id: 'gate_north' },
-                      "Gate Closure Simulation triggered successfully! North gate closed. Rerouting in progress.",
-                      "Gate Closure",
-                      ['gate_north', 'gate_south', 'concourse_a', 'concourse_b']
+                      SCENARIOS[1].endpoint,
+                      SCENARIOS[1].method,
+                      SCENARIOS[1].body as any,
+                      SCENARIOS[1].successMsg,
+                      SCENARIOS[1].simName,
+                      [...SCENARIOS[1].affected]
                     )
                   }
                   className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium text-slate-850 hover:bg-slate-50 transition-colors flex flex-col gap-0.5"
                 >
-                  <span className="text-slate-900 font-semibold">2. Gate Closure Simulation</span>
+                  <span className="text-slate-900 font-semibold">{SCENARIOS[1].name}</span>
                   <span className="text-xs text-slate-400">Close Gate North. 12s progressive rerouting to South.</span>
                 </button>
 
@@ -589,6 +611,34 @@ export function Dashboard(): React.JSX.Element {
                 >
                   <span className="text-slate-900 font-semibold">3. Rain Simulation Event</span>
                   <span className="text-xs text-slate-400">50% exposed crowd shifts to covered shelters over 12s.</span>
+                </button>
+
+                <div className="border-t border-slate-800 my-1" />
+                <div className="px-3 py-1.5 text-[10px] font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  AI-Generated (Advanced)
+                </div>
+
+                <button
+                  onClick={() => {
+                    const desc = prompt('Describe your scenario (e.g., "Sudden thunderstorm during halftime with VIP evacuation"):');
+                    if (desc && desc.trim().length >= 5) {
+                      void handleTriggerScenario(
+                        '/api/demo/generate-scenario',
+                        'POST',
+                        { description: desc.trim() } as unknown as { gate_id: string },
+                        undefined,
+                        'AI Scenario',
+                        ['gate_north', 'gate_south', 'concourse_a', 'concourse_b']
+                      );
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium text-slate-850 hover:bg-indigo-50 transition-colors flex flex-col gap-0.5"
+                >
+                  <span className="text-indigo-600 font-semibold">4. AI Scenario Generator</span>
+                  <span className="text-xs text-slate-400">Describe any scenario in natural language. GenAI creates it.</span>
                 </button>
               </div>
             )}
@@ -640,6 +690,26 @@ export function Dashboard(): React.JSX.Element {
               >
                 Reconnect
               </button>
+            </div>
+          )}
+        </div>
+
+        {/* LIVE AI NARRATOR BAR — persistent, auto-updating */}
+        <div className="px-6 pt-3 shrink-0">
+          <LiveNarratorBar
+            venueSummary={reasoning?.venue_summary || ''}
+            loading={loadingReasoning}
+            degradedMode={reasoning?.degraded_mode || false}
+          />
+
+          {/* Pre-Alert Badges — show when zones are approaching critical */}
+          {preAlerts && preAlerts.alerts.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {preAlerts.alerts.map((alert) => (
+                <div key={alert.zone_id} className="flex-shrink-0 w-72">
+                  <PreAlertBadge alert={alert} />
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -712,6 +782,9 @@ export function Dashboard(): React.JSX.Element {
 
         </main>
       </div>
+
+      {/* OPERATOR CHAT PANEL — floating bottom-right */}
+      <OperatorChatPanel />
     </div>
   );
 }

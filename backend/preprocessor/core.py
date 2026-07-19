@@ -3,35 +3,30 @@ from __future__ import annotations
 from backend.schemas import VenueSnapshot
 
 
+def _compute_pct_capacity(count: int, capacity: int) -> float:
+    """Helper to deterministically calculate percentage capacity."""
+    return (count / capacity * 100.0) if capacity > 0 else 0.0
+
+
 def preprocess_snapshot(snapshot: VenueSnapshot) -> dict:
     """
     Deterministically processes the raw venue snapshot to compute occupancies,
-    rates of change, and threshold breaches. Strips out raw counts and inert
-    data to minimize the token payload sent to the LLM.
+    rates of change, and threshold breaches.
     """
     processed_zones = []
-
     zone_names = {zone.id: zone.name for zone in snapshot.zones}
 
     for occ in snapshot.occupancies:
-        zone_id = occ.zone_id
-        capacity = occ.capacity
-        count = occ.count
-
-        pct_capacity = (count / capacity * 100.0) if capacity > 0 else 0.0
-
-        # Deterministic boolean flags
-        is_critical = pct_capacity > 95.0
-        has_spare_capacity = pct_capacity < 60.0
+        pct_capacity = _compute_pct_capacity(occ.count, occ.capacity)
 
         processed_zones.append(
             {
-                "zone_id": zone_id,
-                "zone_name": zone_names.get(zone_id, zone_id),
+                "zone_id": occ.zone_id,
+                "zone_name": zone_names.get(occ.zone_id, occ.zone_id),
                 "pct_capacity": round(pct_capacity, 2),
                 "trend": occ.trend,
-                "is_critical": is_critical,
-                "has_spare_capacity": has_spare_capacity,
+                "is_critical": pct_capacity > 95.0,
+                "has_spare_capacity": pct_capacity < 60.0,
             }
         )
 
@@ -44,7 +39,6 @@ def preprocess_snapshot(snapshot: VenueSnapshot) -> dict:
         }
         for inc in snapshot.incidents
     ]
-
     return {"zones": processed_zones, "incidents": processed_incidents}
 
 
@@ -74,70 +68,127 @@ _TOP_BOTTLENECK_COUNT: int = 3
 
 def process_historical_run(snapshots: list[VenueSnapshot]) -> dict:
     """Deterministically aggregate a completed run sequence into compressed metrics.
-
-    Implements Rule C — all arithmetic is isolated here and the result is a
-    plain dict that is safe to hand to the LLM context.  No model call is
-    made inside this function.
-
-    Algorithm (matches the reference sketch at gemini-code-1783928865455.py):
-      1. Walk every snapshot.
-      2. For each snapshot, build a zone_id → zone_name lookup from snapshot.zones.
-      3. Inspect every Occupancy in snapshot.occupancies; if pct_capacity > 95 %
-         increment that zone's breach-tick counter.
-      4. After all snapshots, multiply total breach ticks by the polling interval
-         to obtain critical_density_duration_minutes.
-      5. Sort zones by breach-tick count descending; take the top-N names.
-
-    Args:
-        snapshots: Ordered list of VenueSnapshot objects representing a full
-                   event session.  Must not be empty (validated by the caller).
-
-    Returns:
-        A dict with keys:
-          - ``top_bottlenecks``: list[str] of zone names, worst first.
-          - ``critical_density_duration_minutes``: int, total zone-minutes
-            spent above the critical threshold across the entire run.
-          - ``snapshot_count``: int, number of snapshots processed (audit trail).
+    Implements Rule C — all arithmetic is isolated here.
     """
-    # zone_id → accumulated breach tick count
     zone_breach_ticks: dict[str, int] = {}
-    # zone_id → human-readable name (last seen wins — names are stable)
     zone_name_lookup: dict[str, str] = {}
 
     for snapshot in snapshots:
-        # Build / refresh the id → name map for this snapshot's zone topology
         for zone in snapshot.zones:
             zone_name_lookup[zone.id] = zone.name
 
         for occ in snapshot.occupancies:
-            capacity = occ.capacity
-            count = occ.count
-
-            # Deterministic pct_capacity — mirrors preprocess_snapshot (Rule C)
-            pct_capacity = (count / capacity * 100.0) if capacity > 0 else 0.0
-
-            if pct_capacity > _CRITICAL_PCT_THRESHOLD:
+            pct_capacity = _compute_pct_capacity(occ.count, occ.capacity)
+            if pct_capacity > 95.0:
                 zone_breach_ticks[occ.zone_id] = (
                     zone_breach_ticks.get(occ.zone_id, 0) + 1
                 )
 
-    # Sort by breach-tick count descending, pick top N
     sorted_breaches = sorted(
         zone_breach_ticks.items(), key=lambda item: item[1], reverse=True
-    )[:_TOP_BOTTLENECK_COUNT]
+    )[:3]
 
-    top_bottleneck_names: list[str] = [
-        zone_name_lookup.get(zone_id, zone_id) for zone_id, _ in sorted_breaches
+    top_bottleneck_names = [
+        zone_name_lookup.get(z_id, z_id) for z_id, _ in sorted_breaches
     ]
-
-    # Total zone-minutes at critical density across the whole run
-    total_breach_ticks: int = sum(zone_breach_ticks.values())
-    critical_density_duration_minutes: int = (
-        total_breach_ticks * _POLLING_INTERVAL_MINUTES
-    )
+    total_breach_ticks = sum(zone_breach_ticks.values())
 
     return {
         "top_bottlenecks": top_bottleneck_names,
-        "critical_density_duration_minutes": critical_density_duration_minutes,
+        "critical_density_duration_minutes": total_breach_ticks * 5,
         "snapshot_count": len(snapshots),
     }
+
+
+# ---------------------------------------------------------------------------
+# Predictive Pre-Alert scoring (Rule C — deterministic math only)
+# ---------------------------------------------------------------------------
+
+_PRE_ALERT_THRESHOLD: float = 80.0
+"""Zones above this percentage AND trending upward trigger a pre-alert evaluation."""
+
+_TREND_VELOCITY: dict[str, float] = {
+    "rising": 3.0,
+    "stable": 0.0,
+    "falling": -2.0,
+}
+"""Approximate percentage-points-per-tick shift implied by each trend label.
+
+These are deterministic constants — the LLM never sees or derives them.
+The values are calibrated for the 5-minute polling interval.
+"""
+
+
+def compute_pre_alert_zones(snapshot: VenueSnapshot) -> list[dict]:
+    """Identify zones approaching critical density and compute trajectory metrics.
+
+    Implements Rule C — all arithmetic is isolated here.  The returned list
+    of dicts is safe to hand to the Pre-Alert LLM reasoning module as context.
+
+    Algorithm:
+      1. For each occupancy, compute ``pct_capacity`` deterministically.
+      2. Compute ``trajectory_score = pct_capacity + trend_velocity``.
+      3. If ``pct_capacity >= _PRE_ALERT_THRESHOLD`` AND ``trend == "rising"``,
+         the zone qualifies for a pre-alert.
+      4. Estimate minutes to critical:
+         ``max(0, ceil((_CRITICAL_PCT_THRESHOLD - pct_capacity) / velocity * _POLLING_INTERVAL_MINUTES))``.
+
+    Args:
+        snapshot: Current canonical VenueSnapshot.
+
+    Returns:
+        A list of dicts, each containing:
+          - ``zone_id``, ``zone_name``, ``pct_capacity``, ``trend``
+          - ``trajectory_score``: float, projected next-tick occupancy percentage
+          - ``estimated_minutes_to_critical``: int, how many minutes until breach
+          - ``risk_level``: str, one of "elevated" / "high" / "imminent"
+    """
+    import math
+
+    zone_names = {zone.id: zone.name for zone in snapshot.zones}
+    pre_alert_zones: list[dict] = []
+
+    for occ in snapshot.occupancies:
+        capacity = occ.capacity
+        count = occ.count
+        pct_capacity = (count / capacity * 100.0) if capacity > 0 else 0.0
+        velocity = _TREND_VELOCITY.get(occ.trend, 0.0)
+        trajectory_score = pct_capacity + velocity
+
+        # Only flag zones that are above the pre-alert threshold AND rising
+        if pct_capacity >= _PRE_ALERT_THRESHOLD and occ.trend == "rising":
+            # Estimate minutes to critical breach
+            gap = _CRITICAL_PCT_THRESHOLD - pct_capacity
+            if velocity > 0:
+                ticks_to_critical = math.ceil(gap / velocity)
+                est_minutes = max(0, ticks_to_critical * _POLLING_INTERVAL_MINUTES)
+            else:
+                est_minutes = 0  # Already above or velocity non-positive
+
+            # Classify risk level deterministically
+            if pct_capacity >= 92.0:
+                risk_level = "imminent"
+            elif pct_capacity >= 87.0:
+                risk_level = "high"
+            else:
+                risk_level = "elevated"
+
+            pre_alert_zones.append(
+                {
+                    "zone_id": occ.zone_id,
+                    "zone_name": zone_names.get(occ.zone_id, occ.zone_id),
+                    "pct_capacity": round(pct_capacity, 2),
+                    "trend": occ.trend,
+                    "trajectory_score": round(trajectory_score, 2),
+                    "estimated_minutes_to_critical": est_minutes,
+                    "risk_level": risk_level,
+                }
+            )
+
+    # Sort by risk severity: imminent > high > elevated, then by pct_capacity descending
+    risk_order = {"imminent": 0, "high": 1, "elevated": 2}
+    pre_alert_zones.sort(
+        key=lambda z: (risk_order.get(z["risk_level"], 3), -z["pct_capacity"])
+    )
+
+    return pre_alert_zones

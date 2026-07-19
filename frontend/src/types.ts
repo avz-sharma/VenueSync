@@ -58,6 +58,7 @@ export interface ActionRecommendation {
 export interface ReasoningCycleOutput {
   actions: ActionRecommendation[];
   degraded_mode: boolean;
+  venue_summary: string;
 }
 
 export interface ApproveResponse {
@@ -71,3 +72,58 @@ export interface LoadScenarioResponse {
   status: string;
   message: string;
 }
+
+// ---------------------------------------------------------------------------
+// Pre-Alert Engine types (Component 1)
+// ---------------------------------------------------------------------------
+
+export interface PreAlertRecommendation {
+  zone_id: string;
+  zone_name: string;
+  risk_level: 'elevated' | 'high' | 'imminent';
+  estimated_minutes_to_critical: number;
+  preemptive_action: string;
+  confidence: number;
+  rationale: string;
+}
+
+export interface PreAlertOutput {
+  alerts: PreAlertRecommendation[];
+  degraded_mode: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Operator Chat types (Component 2)
+// ---------------------------------------------------------------------------
+
+export interface OperatorQueryResponse {
+  answer: string;
+  supporting_data: string[];
+  confidence: number;
+  degraded_mode: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// GenAI Scenario Planner types (Component 3)
+// ---------------------------------------------------------------------------
+
+export interface ScenarioIntent {
+  target_zone: string;
+  intent_type: 'overwhelm' | 'evacuate' | 'incident_inject' | 'capacity_shift';
+  intensity: number;
+  description: string;
+}
+
+export interface ScenarioSpec {
+  name: string;
+  narrative: string;
+  intents: ScenarioIntent[];
+  estimated_duration_seconds: number;
+}
+
+export interface GenerateScenarioResponse {
+  status: string;
+  scenario: ScenarioSpec;
+  message: string;
+}
+

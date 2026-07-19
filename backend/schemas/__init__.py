@@ -8,6 +8,7 @@ backend code can import from either location::
 """
 
 from shared.schemas.domain import (
+    ActionType,
     HistoricalMetrics,
     Incident,
     IntensityPoint,
@@ -17,9 +18,21 @@ from shared.schemas.domain import (
     Zone,
 )
 
-from .reasoning import ActionRecommendation, ReasoningCycleOutput
+from .reasoning import (
+    ActionRecommendation,
+    DebriefRequest,
+    GenerateScenarioRequest,
+    OperatorQueryRequest,
+    OperatorQueryResponse,
+    PreAlertOutput,
+    PreAlertRecommendation,
+    ReasoningCycleOutput,
+    ScenarioIntent,
+    ScenarioSpec,
+)
 
 __all__: list[str] = [
+    "ActionType",
     "HistoricalMetrics",
     "Incident",
     "IntensityPoint",
@@ -28,5 +41,13 @@ __all__: list[str] = [
     "VenueSnapshot",
     "Zone",
     "ActionRecommendation",
+    "DebriefRequest",
+    "GenerateScenarioRequest",
+    "OperatorQueryRequest",
+    "OperatorQueryResponse",
+    "PreAlertOutput",
+    "PreAlertRecommendation",
     "ReasoningCycleOutput",
+    "ScenarioIntent",
+    "ScenarioSpec",
 ]

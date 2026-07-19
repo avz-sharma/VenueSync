@@ -13,12 +13,14 @@ import logging
 import uuid
 import structlog
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from backend.api.state import VenueSyncState
 
 
 def sanitize_personal_data(logger, method_name, event_dict):
@@ -78,10 +80,19 @@ class VersionResponse(BaseModel):
 
 APP_VERSION: str = "0.1.0"
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize the centralized application state, locking it into this worker's event loop
+    app.state.venue_sync = VenueSyncState()
+    yield
+
+
 app: FastAPI = FastAPI(
     title="VenueSync",
     description="AI command center for crowd management and operational intelligence.",
     version=APP_VERSION,
+    lifespan=lifespan,
 )
 
 if os.getenv("ENVIRONMENT") == "development":

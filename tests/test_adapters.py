@@ -10,7 +10,6 @@ Also verifies the adapter factory and the CustomUploadAdapter stub.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -18,8 +17,6 @@ from backend.adapters import get_adapter
 from backend.adapters.synthetic import SyntheticAdapter
 from backend.adapters.upload import CustomUploadAdapter
 from shared.schemas.domain import Occupancy, Staff, VenueSnapshot, Zone
-
-_TZ_IST: ZoneInfo = ZoneInfo("Asia/Kolkata")
 
 
 # ---------------------------------------------------------------------------
@@ -92,21 +89,21 @@ class TestSyntheticAdapterTimezone:
         assert snapshot.timestamp.tzinfo is not None
 
     @pytest.mark.asyncio
-    async def test_timestamp_uses_asia_kolkata(self) -> None:
+    async def test_timestamp_uses_utc(self) -> None:
         adapter = SyntheticAdapter(seed=42)
         snapshot = await adapter.get_snapshot()
-        # ZoneInfo comparison via UTC offset for IST (+05:30)
+        # UTC offset should be zero
         utc_offset = snapshot.timestamp.utcoffset()
         assert utc_offset is not None
         total_minutes: float = utc_offset.total_seconds() / 60
-        assert total_minutes == 330  # 5h30m = 330 minutes
+        assert total_minutes == 0  # UTC
 
     @pytest.mark.asyncio
     async def test_iso8601_format_includes_offset(self) -> None:
         adapter = SyntheticAdapter(seed=42)
         snapshot = await adapter.get_snapshot()
         iso_str: str = snapshot.timestamp.isoformat()
-        assert "+05:30" in iso_str
+        assert "+00:00" in iso_str
 
     @pytest.mark.asyncio
     async def test_sequential_timestamps_are_monotonically_increasing(self) -> None:

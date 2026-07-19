@@ -18,6 +18,18 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# ---------------------------------------------------------------------------
+# Action taxonomy — single source of truth for valid action types
+# ---------------------------------------------------------------------------
+
+ActionType = Literal[
+    "redirect_crowd",
+    "dispatch_medical",
+    "dispatch_security",
+    "open_emergency_exit",
+    "broadcast_announcement",
+]
+
 
 # ---------------------------------------------------------------------------
 # Entity models

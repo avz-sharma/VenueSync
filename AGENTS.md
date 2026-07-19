@@ -1,8 +1,8 @@
- # Stadium Pulse: Agentic Rules and Architectural Boundaries
+ # VenueSync: Agentic Rules and Architectural Boundaries
 
 ## 1. Project Context and Core Philosophy
 
-Stadium Pulse is an AI command center for tournament organizers, built for **Crowd Management** and **Operational Intelligence** during live events.
+VenueSync is an AI command center for tournament organizers, built for **Crowd Management** and **Operational Intelligence** during live events.
 
 The system's core operational loop is fixed and must never be reordered, skipped, or shortcut by any agent working in this repository:
 
@@ -30,7 +30,7 @@ Strict typing is mandatory across all services — Python must be fully type-hin
 **Expected repository layout** (illustrative — align new code to this shape; Rules A–C below depend on this separation existing):
 
 ```
-stadium-pulse/
+venuesync/
 ├── backend/
 │   ├── adapters/       # DataSourceAdapter implementations (Rule A)
 │   ├── preprocessor/   # Deterministic math: occupancy, rate of change, thresholds (Rule C)

@@ -4,7 +4,7 @@ Generates realistic venue data for development and testing.
 Simulates arrival waves, halftime surges, egress patterns, and
 randomized incidents across a configurable event timeline.
 
-Timezone : Asia/Kolkata (IST, UTC+05:30) — hardcoded per spec.
+Timezone : UTC — tournament-grade time tracking.
 Clock    : Advances by ``tick_minutes`` per ``get_snapshot()`` call.
 Seed     : Deterministic RNG for reproducible test runs.
 """
@@ -12,8 +12,7 @@ Seed     : Deterministic RNG for reproducible test runs.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from backend.adapters.base import DataSourceAdapter
 from shared.schemas.domain import (
@@ -28,7 +27,7 @@ from shared.schemas.domain import (
 # Constants
 # ---------------------------------------------------------------------------
 
-_TIMEZONE: ZoneInfo = ZoneInfo("Asia/Kolkata")
+_TIMEZONE = timezone.utc
 _DEFAULT_TICK_MINUTES: int = 5
 
 # Event phases (minutes relative to event start, T=0)
@@ -50,18 +49,37 @@ _INCIDENT_TYPES: list[str] = [
 # Venue definition — 8-zone stadium graph
 # ---------------------------------------------------------------------------
 
-_VENUE_ZONES: list[dict[str, str | int | list[str]]] = [
+from typing import TypedDict, List, Literal
+
+
+class ZoneTemplate(TypedDict, total=False):
+    id: str
+    name: str
+    capacity: int
+    adjacent_zones: List[str]
+    is_covered: bool
+
+
+class StaffTemplate(TypedDict):
+    id: str
+    role: Literal["security", "medical", "operations", "hospitality"]
+    zone_id: str
+
+
+_VENUE_ZONES: list[ZoneTemplate] = [
     {
         "id": "gate_north",
         "name": "North Gate",
         "capacity": 2000,
         "adjacent_zones": ["concourse_a"],
+        "is_covered": False,
     },
     {
         "id": "gate_south",
         "name": "South Gate",
         "capacity": 2000,
         "adjacent_zones": ["concourse_b"],
+        "is_covered": False,
     },
     {
         "id": "concourse_a",
@@ -92,12 +110,14 @@ _VENUE_ZONES: list[dict[str, str | int | list[str]]] = [
         "name": "East Stand",
         "capacity": 5000,
         "adjacent_zones": ["concourse_a"],
+        "is_covered": False,
     },
     {
         "id": "stand_west",
         "name": "West Stand",
         "capacity": 5000,
         "adjacent_zones": ["concourse_b"],
+        "is_covered": False,
     },
     {
         "id": "vip_lounge",
@@ -111,6 +131,7 @@ _VENUE_ZONES: list[dict[str, str | int | list[str]]] = [
         "name": "Food Court",
         "capacity": 1500,
         "adjacent_zones": ["concourse_a", "concourse_b"],
+        "is_covered": False,
     },
 ]
 
@@ -195,7 +216,7 @@ _ZONE_CURVES: dict[str, list[tuple[int, float]]] = {
 # Staff roster template
 # ---------------------------------------------------------------------------
 
-_STAFF_TEMPLATE: list[dict[str, str]] = [
+_STAFF_TEMPLATE: list[StaffTemplate] = [
     # Security (7)
     {"id": "staff_sec_01", "role": "security", "zone_id": "gate_north"},
     {"id": "staff_sec_02", "role": "security", "zone_id": "gate_south"},
@@ -272,7 +293,7 @@ class SyntheticAdapter(DataSourceAdapter):
     - Staff status cycling based on incident state
 
     Each call to ``get_snapshot()`` advances the simulation clock by
-    ``tick_minutes``.  All timestamps use Asia/Kolkata (IST, UTC+05:30).
+    ``tick_minutes``.  All timestamps use UTC.
     """
 
     def __init__(
@@ -283,9 +304,7 @@ class SyntheticAdapter(DataSourceAdapter):
         self._tick: int = 0
         self._tick_minutes: int = tick_minutes
         self._rng: random.Random = random.Random(seed)
-        self._zones: list[Zone] = [
-            Zone(**z) for z in _VENUE_ZONES  # type: ignore[arg-type]
-        ]
+        self._zones: list[Zone] = [Zone(**z) for z in _VENUE_ZONES]
         self._zone_map: dict[str, Zone] = {z.id: z for z in self._zones}
         self._previous_counts: dict[str, int] = {z.id: 0 for z in self._zones}
 
@@ -341,7 +360,7 @@ class SyntheticAdapter(DataSourceAdapter):
         return [
             Staff(
                 id=s["id"],
-                role=s["role"],  # type: ignore[arg-type]
+                role=s["role"],
                 zone_id=s["zone_id"],
                 status="on_duty",
             )
@@ -425,8 +444,8 @@ class SyntheticAdapter(DataSourceAdapter):
                     Incident(
                         id=f"inc_{self._rng.getrandbits(32):08x}",
                         zone_id=occ.zone_id,
-                        type=incident_type,  # type: ignore[arg-type]
-                        severity=severity,  # type: ignore[arg-type]
+                        type=incident_type,
+                        severity=severity,
                         reported_at=reported_at,
                     )
                 )
@@ -477,9 +496,9 @@ class SyntheticAdapter(DataSourceAdapter):
             staff_list.append(
                 Staff(
                     id=template["id"],
-                    role=role,  # type: ignore[arg-type]
+                    role=role,
                     zone_id=zone_id,
-                    status=status,  # type: ignore[arg-type]
+                    status=status,
                 )
             )
 
