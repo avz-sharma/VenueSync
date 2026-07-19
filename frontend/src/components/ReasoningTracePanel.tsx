@@ -52,7 +52,7 @@ export function ReasoningTracePanel({
       trigger = "SYSTEM DEGRADED - TELEMETRY UNRELIABLE";
       strategy = rationale;
     }
-  } catch (err) {
+  } catch {
     // Graceful degraded mode / parsing error fallback
     trigger = "Unknown Telemetry State";
     strategy = rationale;
@@ -73,7 +73,7 @@ export function ReasoningTracePanel({
           })}
         </>
       );
-    } catch (e) {
+    } catch {
       return text;
     }
   };

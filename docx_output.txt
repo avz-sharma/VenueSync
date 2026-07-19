@@ -1,0 +1,155 @@
+VenueSync Cloud Deployment Implementation Plan (Google Cloud Free Tier)
+Objective
+Deploy VenueSync as a single production-ready Google Cloud Run service where:
+FastAPI serves both the API and the React frontend.
+React (Vite) is built into static assets during Docker build.
+Only one Cloud Run instance is deployed.
+Gemini API keys are securely managed using Cloud Run environment variables.
+The application scales to zero when idle to remain within the Google Cloud Free Tier.
+GitHub remains the source of truth with automated deployment support.
+High-Level Architecture
+Browser      │      ▼Google Cloud Run      │      ▼FastAPI (Uvicorn)      │      ├──────── API Endpoints      │      ├──────── Gemini Reasoning Engine      │      └──────── Static React Build
+There should be no separate frontend deployment.
+The frontend must be served directly by FastAPI.
+Phase 1 — Repository Audit
+Tasks
+Inspect existing repository structure.
+Validate:
+backend/Dockerfile
+frontend/Dockerfile
+requirements.txt
+package.json
+Remove unnecessary deployment artifacts.
+Verify application entrypoint.
+Verify current environment variable usage.
+Deliverables
+Repository deployment report
+List of required modifications
+Phase 2 — Backend Production Configuration
+Tasks
+Modify FastAPI so that:
+API routes
+Remain unchanged.
+Example:
+/api/*
+Static Assets
+Serve:
+frontend/dist
+using FastAPI StaticFiles.
+SPA Support
+Implement React SPA fallback.
+Every unknown route should return:
+index.html
+Examples:
+/dashboardanalyticssettingsreasoning
+must all correctly load React.
+Deliverables
+Production-ready FastAPI routing.
+Phase 3 — React Production Build
+Remove development-only behavior.
+The container should execute:
+npm install↓npm run build
+Output:
+frontend/dist
+The Vite dev server must never run inside Cloud Run.
+Phase 4 — Unified Docker Image
+Replace the current deployment approach with a multi-stage Docker build.
+Stage 1
+Node Builder
+Responsibilities:
+Install dependencies
+Build React
+Produce frontend/dist
+Stage 2
+Python Runtime
+Responsibilities:
+Install Python dependencies
+Copy backend
+Copy frontend/dist
+Launch Uvicorn
+Requirements:
+Small final image
+Minimal attack surface
+Layer caching optimized
+Non-root execution where possible
+Cloud Run must listen on:
+PORT=8080
+Phase 5 — Environment Variables
+Remove dependency on local .env files in production.
+Move configuration to Cloud Run environment variables.
+Variables include:
+GEMINI_API_KEY
+DATA_SOURCE
+LOG_LEVEL
+Any application-specific configuration
+No secrets may be committed to GitHub.
+Phase 6 — Cloud Run Deployment
+Deploy a single service.
+Target characteristics:
+1 Cloud Run Service
+Auto HTTPS
+Scale-to-zero enabled
+Public endpoint
+Region selected for lowest latency and free-tier friendliness
+Appropriate CPU and memory allocation
+Phase 7 — GitHub Deployment Pipeline
+Configure automated deployment.
+Pipeline:
+GitHub Push↓Cloud Build↓Artifact Registry↓Cloud Run
+Requirements:
+Deploy only on main branch
+Build verification
+Automatic rollback on failure
+Build logs available
+Phase 8 — Production Validation
+Validate:
+Frontend
+Loads correctly
+Assets cached
+Routing works
+No broken imports
+Backend
+Health endpoint
+API endpoints
+Upload endpoint
+Gemini reasoning endpoint
+Integration
+React communicates with backend without CORS.
+Phase 9 — Production Optimizations
+Implement:
+GZip compression
+Proper cache headers
+Structured logging
+Startup diagnostics
+Health checks
+Readiness checks
+Graceful shutdown
+Container startup optimization
+Phase 10 — Documentation
+Update README with:
+Local development
+Production deployment
+Required environment variables
+Docker usage
+Google Cloud deployment
+Troubleshooting
+Rollback instructions
+Acceptance Criteria
+The deployment is considered complete only when:
+One Cloud Run service hosts the entire application.
+React is served directly by FastAPI.
+All API endpoints remain functional.
+Gemini integration works using Cloud Run environment variables.
+No CORS configuration is required.
+The application scales to zero when idle.
+Deployment succeeds directly from GitHub.
+No secrets are committed.
+Cold start remains acceptable.
+The project remains compatible with the Google Cloud Free Tier.
+Constraints
+The implementation must:
+Preserve existing project structure where practical.
+Minimize code changes outside deployment concerns.
+Avoid introducing Kubernetes, Compute Engine, or additional managed services unless required.
+Keep infrastructure simple enough for hackathon demonstrations.
+Produce a maintainable production configuration suitable for future scaling.

@@ -152,7 +152,7 @@ export function useDashboard() {
         if (data && data.message) {
           displayMsg = data.message;
         }
-      } catch (e) {
+      } catch {
       }
 
       setScenarioMessage({
