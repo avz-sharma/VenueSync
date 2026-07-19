@@ -96,7 +96,10 @@ export function OperatorChatPanel(): React.JSX.Element {
     <>
       {/* Toggle Button */}
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="Toggle AI operator chat assistance panel"
+        aria-expanded={isOpen}
         className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-2xl shadow-2xl transition-all duration-300 ${
           isOpen
             ? 'bg-slate-800 border border-slate-700 text-slate-300'
@@ -232,23 +235,27 @@ export function OperatorChatPanel(): React.JSX.Element {
             <input
               ref={inputRef}
               type="text"
+              aria-label="Tournament operator natural language query input"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask about the venue state…"
-              maxLength={500}
+              placeholder="Ask about venue state..."
+              maxLength={280}
               disabled={loading}
               className="flex-1 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 disabled:opacity-50 transition-colors"
               id="operator-chat-input"
             />
             <button
-              type="submit"
+              type="button"
+              aria-label="Submit query to AI decision engine"
+              onClick={(e) => { void handleSubmit(e as unknown as React.FormEvent); }}
               disabled={!query.trim() || loading}
-              className="shrink-0 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl px-3 py-2 transition-colors"
+              className="shrink-0 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl px-3 py-2 transition-colors flex items-center gap-1.5"
               id="operator-chat-send"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
               </svg>
+              <span className="text-xs font-semibold">Send</span>
             </button>
           </div>
         </form>

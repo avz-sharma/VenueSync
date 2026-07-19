@@ -14,7 +14,11 @@ export function LiveNarratorBar({
   const hasContent = venueSummary && venueSummary.length > 0;
 
   return (
-    <div className="w-full rounded-xl border border-slate-800 bg-gradient-to-r from-slate-900/80 via-indigo-950/30 to-slate-900/80 px-5 py-3 shadow-lg backdrop-blur-sm">
+    <div
+      role="region"
+      aria-label="Real time AI venue status narration banner"
+      className="w-full rounded-xl border border-slate-800 bg-gradient-to-r from-slate-900/80 via-indigo-950/30 to-slate-900/80 px-5 py-3 shadow-lg backdrop-blur-sm"
+    >
       <div className="flex items-center gap-3">
         {/* AI Indicator */}
         <div className="flex items-center gap-2 shrink-0">
