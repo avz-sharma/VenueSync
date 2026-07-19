@@ -501,8 +501,8 @@ async def run_debrief(body: DebriefRequest) -> HistoricalMetrics:
                 exc,
             )
             return HistoricalMetrics(
-                top_bottlenecks=compressed_metrics.get("top_bottlenecks") or ["unknown"],  # type: ignore[possibly-undefined]
-                critical_density_duration_minutes=compressed_metrics.get(  # type: ignore[possibly-undefined]
+                top_bottlenecks=compressed_metrics.get("top_bottlenecks", ["unknown"]),
+                critical_density_duration_minutes=compressed_metrics.get(
                     "critical_density_duration_minutes", 0
                 ),
                 executive_summary=(

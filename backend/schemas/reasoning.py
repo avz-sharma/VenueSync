@@ -1,4 +1,5 @@
 import uuid
+import time
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -10,6 +11,10 @@ class ActionRecommendation(BaseModel):
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         description="Unique identifier for the action",
+    )
+    created_at: float = Field(
+        default_factory=time.time,
+        description="Timestamp when the recommendation was created",
     )
     action_type: ActionType = Field(
         ...,

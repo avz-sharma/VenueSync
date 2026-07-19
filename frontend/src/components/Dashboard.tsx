@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import type { VenueSnapshot, ReasoningCycleOutput, PreAlertOutput } from '../types';
+import React, { useEffect, useState, useRef } from 'react';
+
+import { useDashboard } from '../hooks/useDashboard';
 import { ZoneMap } from './ZoneMap';
 import { RecommendationQueue } from './RecommendationQueue';
 import { SidebarRoster } from './SidebarRoster';
@@ -109,294 +110,35 @@ function useClickOutside(ref: React.RefObject<HTMLElement | null>, handler: () =
 }
 
 export function Dashboard(): React.JSX.Element {
-  // Snapshot states
-  const [snapshot, setSnapshot] = useState<VenueSnapshot | null>(null);
-  const [loadingSnapshot, setLoadingSnapshot] = useState<boolean>(true);
-  const [isFetching, setIsFetching] = useState<boolean>(false);
-  const [errorCount, setErrorCount] = useState<number>(0);
-  const ERROR_THRESHOLD = 1;
-  
-  // Reasoning states
-  const [reasoning, setReasoning] = useState<ReasoningCycleOutput | null>(null);
-  const [loadingReasoning, setLoadingReasoning] = useState<boolean>(false);
-  const [lastReasonTime, setLastReasonTime] = useState<number>(0);
-  const lastReasonTimeRef = useRef<number>(0);
-  
-  // Interaction/Mutation states
-  const [approvedActionIds, setApprovedActionIds] = useState<Set<string>>(new Set());
-  const [dismissedActionIds, setDismissedActionIds] = useState<Set<string>>(new Set());
-  const [scenarioLoading, setScenarioLoading] = useState<boolean>(false);
-  const [scenarioMessage, setScenarioMessage] = useState<{ text: string; isError: boolean } | null>(null);
-  
-  const [activeSimulation, setActiveSimulation] = useState<{
-    name: string;
-    startedAt: number;
-    durationMs: number;
-    affectedZones: string[];
-  } | null>(null);
-  
-  // Connection / general error state
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-
-  // Pre-Alert Engine state
-  const [preAlerts, setPreAlerts] = useState<PreAlertOutput | null>(null);
-
-  // Ref to track active interval for cleanup
-  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Dropdown states for scenario simulation
-  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const {
+    snapshot,
+    loadingSnapshot,
+    isFetching,
+    errorCount,
+    ERROR_THRESHOLD,
+    reasoning,
+    loadingReasoning,
+    lastReasonTime,
+    approvedActionIds,
+    dismissedActionIds,
+    scenarioLoading,
+    scenarioMessage,
+    setScenarioMessage,
+    activeSimulation,
+    connectionError,
+    preAlerts,
+    isDropdownOpen,
+    setIsDropdownOpen,
+    dropdownRef,
+    reconnectSeconds,
+    handleApproveAction,
+    handleDismissAction,
+    handleTriggerScenario,
+    handleRetryConnection,
+  } = useDashboard();
 
   // Close menu when clicking outside
   useClickOutside(dropdownRef, () => setIsDropdownOpen(false));
-
-  // Reconnection hook (clean component lifecycle)
-  const [reconnectSeconds, setReconnectSeconds] = useState(0);
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (connectionError) {
-      setReconnectSeconds(4);
-      interval = setInterval(() => {
-        setReconnectSeconds(prev => {
-          if (prev <= 1) {
-            void handleRetryConnection();
-            return 4; 
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [connectionError]);
-
-  // API Call - Fetch snapshot
-  const fetchSnapshot = useCallback(async (isInitial = false): Promise<VenueSnapshot | null> => {
-    if (isInitial) setLoadingSnapshot(true);
-    setIsFetching(true);
-    try {
-      const res = await fetch('/api/snapshot');
-      if (!res.ok) throw new Error(`HTTP status ${res.status}`);
-      const data: VenueSnapshot = await res.json();
-      setSnapshot(data);
-      setConnectionError(null);
-      setErrorCount(0);
-      return data;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'API Server unreachable';
-      setConnectionError(msg);
-      setErrorCount((prev) => prev + 1);
-      return null;
-    } finally {
-      setIsFetching(false);
-      if (isInitial) setLoadingSnapshot(false);
-    }
-  }, []);
-
-  // API Call - Trigger Reasoning Engine
-  const runReasoning = useCallback(async (force = false): Promise<void> => {
-    if (loadingReasoning && !force) return;
-    setLoadingReasoning(true);
-    try {
-      const res = await fetch('/api/reason', { method: 'POST' });
-      const data: ReasoningCycleOutput = await res.json();
-      setReasoning(data);
-      const now = Date.now();
-      lastReasonTimeRef.current = now;
-      setLastReasonTime(now);
-    } catch (err) {
-      console.error('Reasoning failed:', err);
-    } finally {
-      setLoadingReasoning(false);
-    }
-  }, [loadingReasoning]);
-
-  // API Call - Fetch Pre-Alerts
-  const fetchPreAlerts = async (): Promise<void> => {
-    try {
-      const res = await fetch('/api/pre-alert');
-      if (!res.ok) return;
-      const data: PreAlertOutput = await res.json();
-      setPreAlerts(data);
-    } catch (err: unknown) {
-      // Pre-alerts are non-critical — silently degrade
-      console.warn('Pre-alert fetch failed:', err);
-    }
-  };
-
-  // API Call - Approve Action
-  const handleApproveAction = async (actionId: string): Promise<void> => {
-    try {
-      const res = await fetch(`/api/actions/${actionId}/approve`, {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        throw new Error(`Action approval failed: HTTP status ${res.status}`);
-      }
-      // Add to local approved set
-      setApprovedActionIds((prev) => {
-        const next = new Set(prev);
-        next.add(actionId);
-        return next;
-      });
-    } catch (err: any) {
-      console.error(err);
-      alert(err.message || 'Could not approve this action.');
-    }
-  };
-
-  // Local state - Dismiss Action
-  const handleDismissAction = (actionId: string) => {
-    setDismissedActionIds((prev) => {
-      const next = new Set(prev);
-      next.add(actionId);
-      return next;
-    });
-  };
-
-  // API Call - Trigger Simulation Scenario
-  const handleTriggerScenario = async (
-    endpoint: string,
-    method: 'GET' | 'POST',
-    body?: { gate_id: string },
-    successMessage?: string,
-    simulationName?: string,
-    affectedZones?: string[]
-  ) => {
-    setScenarioLoading(true);
-    setScenarioMessage(null);
-    setIsDropdownOpen(false);
-    try {
-      const config: RequestInit = { method };
-      if (body) {
-        config.headers = { 'Content-Type': 'application/json' };
-        config.body = JSON.stringify(body);
-      }
-      
-      const res = await fetch(endpoint, config);
-      if (!res.ok) {
-        throw new Error(`Failed to trigger scenario: HTTP status ${res.status}`);
-      }
-      
-      // Reset approved and dismissed actions when scenario is overridden
-      setApprovedActionIds(new Set());
-      setDismissedActionIds(new Set());
-      
-      // Clear client-side reasoning timestamp so it can reason immediately on the new state
-      lastReasonTimeRef.current = 0;
-      setLastReasonTime(0);
-
-      // Update state
-      const updatedSnapshot = await fetchSnapshot();
-
-      // Check if response contains a custom message
-      let displayMsg = successMessage;
-      try {
-        const data = await res.json();
-        if (data && data.message) {
-          displayMsg = data.message;
-        }
-      } catch (e) {
-        // Fallback to custom successMessage if parsing fails
-      }
-
-      setScenarioMessage({
-        text: displayMsg || 'Simulation scenario triggered successfully.',
-        isError: false,
-      });
-
-      if (simulationName && affectedZones) {
-        const sim = {
-          name: simulationName,
-          startedAt: Date.now(),
-          durationMs: 12000,
-          affectedZones,
-        };
-        setActiveSimulation(sim);
-        setTimeout(() => {
-          setActiveSimulation((prev) => (prev?.startedAt === sim.startedAt ? null : prev));
-        }, 12500);
-      } else {
-        setActiveSimulation(null);
-      }
-
-      // Force reasoning cycle immediately
-      if (updatedSnapshot) {
-        await runReasoning(true);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setScenarioMessage({
-        text: err.message || 'Could not trigger simulation scenario.',
-        isError: true,
-      });
-    } finally {
-      setScenarioLoading(false);
-    }
-  };
-
-  // Helper to start the polling interval
-  const startPolling = () => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-    pollingIntervalRef.current = setInterval(async () => {
-      // Stop execution if error threshold reached
-      if (errorCount >= ERROR_THRESHOLD) {
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
-        return;
-      }
-      
-      const snap = await fetchSnapshot();
-      if (!snap) {
-        // Stop execution chain: clear the interval
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
-      }
-    }, 5000);
-  };
-
-  // API Call - Reconnect / Retry Connection
-  const handleRetryConnection = async () => {
-    setConnectionError(null);
-    setErrorCount(0);
-    const snap = await fetchSnapshot(true);
-    if (snap) {
-      // Run reasoning cycle on successful manual reconnect
-      await runReasoning(true);
-      startPolling();
-    }
-  };
-
-  // Initial Load and Polling Setup
-  useEffect(() => {
-    // 1. Initial fetch of snapshot
-    const initialLoad = async () => {
-      const snap = await fetchSnapshot(true);
-      if (snap) {
-        // Run initial reasoning cycle on initial load
-        await runReasoning(true);
-        // Fetch pre-alerts on initial load
-        await fetchPreAlerts();
-        startPolling();
-      }
-    };
-
-    void initialLoad();
-
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-    };
-  }, []);
 
   // Derived Snapshot Metrics
   const metrics = React.useMemo(() => {
@@ -769,7 +511,7 @@ export function Dashboard(): React.JSX.Element {
                 <div className="flex-1 bg-slate-900/40 border border-slate-800/80 backdrop-blur-md rounded-2xl p-4 shadow-sm overflow-hidden flex flex-col">
                   <RecommendationQueue
                     reasoningOutput={reasoning}
-                    loading={loadingReasoning && !reasoning}
+                    loading={loadingReasoning}
                     onApprove={handleApproveAction}
                     onDismiss={handleDismissAction}
                     approvedIds={approvedActionIds}

@@ -116,7 +116,7 @@ class TestZone:
     def test_frozen(self) -> None:
         zone = _make_zone()
         with pytest.raises(ValidationError):
-            zone.capacity = 2000  # type: ignore[misc]
+            setattr(zone, "capacity", 2000)
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ class TestOccupancy:
     def test_frozen(self) -> None:
         occ = _make_occupancy()
         with pytest.raises(ValidationError):
-            occ.count = 999  # type: ignore[misc]
+            setattr(occ, "count", 999)
 
 
 # ---------------------------------------------------------------------------
@@ -226,11 +226,13 @@ class TestIncident:
     def test_rejects_invalid_type(self) -> None:
         with pytest.raises(ValidationError):
             Incident(
-                id="inc_bad",
-                zone_id="zone_a",
-                type="fire",  # type: ignore[arg-type]
-                severity="low",
-                reported_at=_NOW,
+                **{
+                    "id": "inc_bad",
+                    "zone_id": "zone_a",
+                    "type": "fire",
+                    "severity": "low",
+                    "reported_at": _NOW,
+                }
             )
 
     def test_all_severities(self) -> None:
@@ -272,10 +274,12 @@ class TestStaff:
     def test_rejects_invalid_role(self) -> None:
         with pytest.raises(ValidationError):
             Staff(
-                id="s1",
-                role="janitor",  # type: ignore[arg-type]
-                zone_id="z1",
-                status="on_duty",
+                **{
+                    "id": "s1",
+                    "role": "janitor",
+                    "zone_id": "z1",
+                    "status": "on_duty",
+                }
             )
 
 
@@ -357,7 +361,7 @@ class TestVenueSnapshot:
     def test_frozen(self) -> None:
         snap = self._make_snapshot()
         with pytest.raises(ValidationError):
-            snap.timestamp = _NOW  # type: ignore[misc]
+            setattr(snap, "timestamp", _NOW)
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +403,7 @@ class TestIntensityPoint:
     def test_frozen(self) -> None:
         pt = IntensityPoint(x=1.0, y=2.0, intensity=0.5)
         with pytest.raises(ValidationError):
-            pt.intensity = 0.9  # type: ignore[misc]
+            setattr(pt, "intensity", 0.9)
 
 
 # ---------------------------------------------------------------------------
@@ -499,4 +503,4 @@ class TestHistoricalMetrics:
             executive_summary="Summary.",
         )
         with pytest.raises(ValidationError):
-            hm.critical_density_duration_minutes = 99  # type: ignore[misc]
+            setattr(hm, "critical_density_duration_minutes", 99)

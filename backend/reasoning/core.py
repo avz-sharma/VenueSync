@@ -422,7 +422,6 @@ def generate_actions(
                     response_mime_type="application/json",
                     response_schema=ReasoningCycleOutput,
                     temperature=0.2,
-                    tools=ACTION_TOOLS,
                 ),
             )
 
