@@ -282,4 +282,3 @@ def test_iso8601_format_includes_offset(mock_snapshot: VenueSnapshot) -> None:
     """Verify the ISO 8601 string carries a UTC offset or Z suffix."""
     iso_str = mock_snapshot.timestamp.isoformat()
     assert "+00:00" in iso_str or iso_str.endswith("Z")
-

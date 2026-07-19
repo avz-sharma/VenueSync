@@ -166,7 +166,6 @@ class Staff(BaseModel):
     )
 
 
-
 class HistoricalMetrics(BaseModel):
     """Post-event summary produced after a session concludes.
 

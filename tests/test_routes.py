@@ -16,8 +16,10 @@ from backend.preprocessor.core import process_historical_run
 from backend.schemas.reasoning import ActionRecommendation, ReasoningCycleOutput
 from shared.schemas.domain import HistoricalMetrics, Occupancy, VenueSnapshot, Zone
 
+
 def override_get_app_state():
     return app.state.venue_sync
+
 
 app.dependency_overrides[get_app_state] = override_get_app_state
 
