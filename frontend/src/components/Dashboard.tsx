@@ -260,7 +260,7 @@ export function Dashboard(): React.JSX.Element {
                 )
               }
               disabled={scenarioLoading}
-              className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 h-10 rounded-l-xl transition-all duration-200 active:scale-[0.98] shadow-sm flex items-center gap-2 border-r border-slate-800 disabled:opacity-50"
+              className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 h-10 rounded-l-xl transition-all duration-200 active:scale-[0.98] shadow-sm flex items-center gap-2 border-r border-slate-800 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               {scenarioLoading ? (
                 <>
@@ -283,7 +283,7 @@ export function Dashboard(): React.JSX.Element {
             {/* Dropdown Chevron Toggle */}
             <button
               onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className="group bg-slate-900 hover:bg-slate-800 text-white h-10 px-2.5 rounded-r-xl transition-all duration-200 active:scale-[0.98] shadow-sm flex items-center justify-center border-l border-slate-800"
+              className="group bg-slate-900 hover:bg-slate-800 text-white h-10 px-2.5 rounded-r-xl transition-all duration-200 active:scale-[0.98] shadow-sm flex items-center justify-center border-l border-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               aria-label="Select Scenario"
             >
               <svg
@@ -326,7 +326,7 @@ export function Dashboard(): React.JSX.Element {
                     void handleTriggerScenario(
                       SCENARIOS[1].endpoint,
                       SCENARIOS[1].method,
-                      SCENARIOS[1].body as any,
+                      SCENARIOS[1].body as { gate_id: string },
                       SCENARIOS[1].successMsg,
                       SCENARIOS[1].simName,
                       [...SCENARIOS[1].affected]

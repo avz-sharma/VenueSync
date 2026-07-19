@@ -11,10 +11,15 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from backend.main import app
-from backend.api.state import VenueSyncState
+from backend.api.state import VenueSyncState, get_app_state
 from backend.preprocessor.core import process_historical_run
 from backend.schemas.reasoning import ActionRecommendation, ReasoningCycleOutput
 from shared.schemas.domain import HistoricalMetrics, Occupancy, VenueSnapshot, Zone
+
+def override_get_app_state():
+    return app.state.venue_sync
+
+app.dependency_overrides[get_app_state] = override_get_app_state
 
 mock_output = ReasoningCycleOutput(
     actions=[

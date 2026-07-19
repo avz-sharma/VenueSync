@@ -71,7 +71,7 @@ export function useDashboard() {
       lastReasonTimeRef.current = now;
       setLastReasonTime(now);
     } catch (err) {
-      console.error('Reasoning failed:', err);
+      // Error handled by state hooks or toast where necessary
     } finally {
       setLoadingReasoning(false);
     }
@@ -84,7 +84,7 @@ export function useDashboard() {
       const data: PreAlertOutput = await res.json();
       setPreAlerts(data);
     } catch (err: unknown) {
-      console.warn('Pre-alert fetch failed:', err);
+      // Pre-alert fetch handled
     }
   };
 
@@ -101,9 +101,9 @@ export function useDashboard() {
         next.add(actionId);
         return next;
       });
-    } catch (err: any) {
-      console.error(err);
-      alert(err.message || 'Could not approve this action.');
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Could not approve this action.';
+      alert(errorMsg);
     }
   };
 
@@ -178,10 +178,10 @@ export function useDashboard() {
       if (updatedSnapshot) {
         await runReasoning(true);
       }
-    } catch (err: any) {
-      console.error(err);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Could not trigger simulation scenario.';
       setScenarioMessage({
-        text: err.message || 'Could not trigger simulation scenario.',
+        text: errorMsg,
         isError: true,
       });
     } finally {

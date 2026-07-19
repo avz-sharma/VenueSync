@@ -104,7 +104,7 @@ export function OperatorChatPanel(): React.JSX.Element {
           isOpen
             ? 'bg-slate-800 border border-slate-700 text-slate-300'
             : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500'
-        }`}
+        } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
         title="Open AI Operator Chat"
         id="operator-chat-toggle"
       >
@@ -241,7 +241,7 @@ export function OperatorChatPanel(): React.JSX.Element {
               placeholder="Ask about venue state..."
               maxLength={280}
               disabled={loading}
-              className="flex-1 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 disabled:opacity-50 transition-colors"
+              className="flex-1 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 transition-colors"
               id="operator-chat-input"
             />
             <button
@@ -249,7 +249,7 @@ export function OperatorChatPanel(): React.JSX.Element {
               aria-label="Submit query to AI decision engine"
               onClick={(e) => { void handleSubmit(e as unknown as React.FormEvent); }}
               disabled={!query.trim() || loading}
-              className="shrink-0 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl px-3 py-2 transition-colors flex items-center gap-1.5"
+              className="shrink-0 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl px-3 py-2 transition-colors flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               id="operator-chat-send"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
